@@ -23,7 +23,7 @@ import software.amazon.awssdk.services.sts.model.StsException;
 import java.util.function.Function;
 
 /**
- * 고객사 Role 을 AssumeRole 해서 연결 상태를 판정한다.
+ * 고객사 Role 을 AssumeRole 해서 연결 상태를 판정하고, 분석용 임시 자격증명을 발급한다.
  * Access Key 는 받지 않고, 1시간짜리 임시 자격증명만 쓰고 저장하지 않는다.
  */
 @Slf4j

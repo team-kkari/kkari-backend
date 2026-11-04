@@ -25,6 +25,7 @@ public class StartAnalysisService {
     private final ApplicationEventPublisher eventPublisher;
 
     // 고객사 Role 임시 자격증명 유효 시간. 이보다 오래 진행 중이면 서버 재시작 등으로 멈춘 작업으로 본다
+    // 생성 시각 기준이라 오래 대기 후 실행 중인 작업이 실패 처리될 수 있지만, 결과 조회는 가장 최근 성공 작업을 쓰므로 허용한다
     private static final Duration STALE_AFTER = Duration.ofHours(1);
 
     // 이미 대기·실행 중인 분석이 있으면 새로 만들지 않고 그 작업을 돌려준다

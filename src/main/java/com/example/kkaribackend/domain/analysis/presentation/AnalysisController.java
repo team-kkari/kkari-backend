@@ -23,7 +23,7 @@ public class AnalysisController {
 
     @Operation(summary = "인프라 분석 시작",
         description = "고객사 AWS의 리소스 구조, 14일 사용률, 월 예상 비용을 비동기로 수집한다. "
-            + "이미 대기·실행 중인 분석이 있으면 그 작업 ID를 돌려준다. 진행 상황은 GET /v1/jobs/{jobId}로 확인.")
+            + "이미 대기·실행 중인 분석이 있으면 그 작업 ID를 돌려준다(1시간이 지난 작업은 실패 처리하고 새로 시작). 진행 상황은 GET /v1/jobs/{jobId}로 확인.")
     @ResponseStatus(HttpStatus.ACCEPTED)
     @PostMapping("/projects/{projectId}/analysis")
     public StartAnalysisResponse start(@PathVariable Long projectId) {

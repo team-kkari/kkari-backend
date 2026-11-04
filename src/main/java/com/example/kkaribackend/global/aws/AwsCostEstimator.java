@@ -5,6 +5,7 @@ import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Ec2Instance;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Missing;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.RdsInstance;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Resources;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -65,6 +66,13 @@ public class AwsCostEstimator {
             .region(Region.US_EAST_1) // Price List API 엔드포인트
             .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)))
             .build(), objectMapper);
+    }
+
+    @PreDestroy
+    void close() {
+        if (pricingClient != null) {
+            pricingClient.close();
+        }
     }
 
     AwsCostEstimator(String region, PricingClient pricingClient, ObjectMapper objectMapper) {
