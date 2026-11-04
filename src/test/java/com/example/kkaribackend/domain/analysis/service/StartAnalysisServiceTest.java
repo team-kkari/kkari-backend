@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,7 +49,8 @@ class StartAnalysisServiceTest {
         Project project = project(AwsConnectionStatus.CONNECTED);
         when(projectFacade.getAssignedProject(1L)).thenReturn(project);
         when(analysisJobRepository.findFirstByProjectIdAndStatusInOrderByIdDesc(1L, AnalysisStatus.IN_PROGRESS))
-            .thenReturn(Optional.of(AnalysisJob.builder().id(7L).project(project).status(AnalysisStatus.RUNNING).build()));
+            .thenReturn(Optional.of(AnalysisJob.builder().id(7L).project(project).status(AnalysisStatus.RUNNING)
+                .createdAt(LocalDateTime.now().minusMinutes(10)).build()));
 
         assertThat(service.execute(1L).jobId()).isEqualTo(7L);
         verify(analysisJobRepository, never()).save(any());
@@ -56,15 +58,19 @@ class StartAnalysisServiceTest {
     }
 
     @Test
-    void 진행_중인_분석이_없으면_새_작업을_만들고_실행을_요청한다() {
+    void 한_시간이_지난_진행_중_작업은_실패_처리하고_새_작업을_만든다() {
         Project project = project(AwsConnectionStatus.CONNECTED);
+        AnalysisJob stale = AnalysisJob.builder().id(7L).project(project).status(AnalysisStatus.RUNNING)
+            .createdAt(LocalDateTime.now().minusHours(1).minusMinutes(1)).build();
         when(projectFacade.getAssignedProject(1L)).thenReturn(project);
         when(analysisJobRepository.findFirstByProjectIdAndStatusInOrderByIdDesc(1L, AnalysisStatus.IN_PROGRESS))
-            .thenReturn(Optional.empty());
+            .thenReturn(Optional.of(stale));
         when(analysisJobRepository.save(any(AnalysisJob.class)))
             .thenReturn(AnalysisJob.builder().id(8L).project(project).build());
 
         assertThat(service.execute(1L).jobId()).isEqualTo(8L);
+        assertThat(stale.getStatus()).isEqualTo(AnalysisStatus.FAILED);
+        assertThat(stale.getFailureReason()).isEqualTo("시간 초과로 중단되었습니다.");
         verify(eventPublisher).publishEvent(new AnalysisRequestedEvent(8L));
     }
 

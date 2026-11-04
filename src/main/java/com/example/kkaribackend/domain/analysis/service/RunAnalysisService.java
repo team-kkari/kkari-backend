@@ -28,7 +28,7 @@ public class RunAnalysisService {
     private final AwsInfraCollector awsInfraCollector;
     private final ObjectMapper objectMapper;
 
-    @Async("analysisExecutor")
+    @Async
     @TransactionalEventListener
     public void execute(AnalysisRequestedEvent event) {
         AnalysisJob job = analysisJobRepository.findWithProjectById(event.jobId()).orElseThrow();
@@ -45,7 +45,7 @@ public class RunAnalysisService {
             });
             job.succeed(objectMapper.writeValueAsString(snapshot));
         } catch (AwsException e) {
-            job.fail("고객사 Role AssumeRole 실패: " + e.getMessage());
+            job.fail(e.getMessage());
         } catch (RuntimeException e) {
             log.error("인프라 분석 실패: job={}", job.getId(), e);
             job.fail("분석 중 예상하지 못한 오류가 발생했습니다.");

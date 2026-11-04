@@ -115,16 +115,15 @@ class AwsInfraCollectorTest {
 
         assertThat(steps).containsExactly(AnalysisStep.STRUCTURE, AnalysisStep.USAGE, AnalysisStep.COST);
         assertThat(snapshot.resources().ec2())
-            .containsExactly(new Ec2Instance("i-1", "t3.micro", "running", "ap-northeast-2a"));
+            .containsExactly(new Ec2Instance("i-1", "t3.micro", "Linux/UNIX", "running", "ap-northeast-2a"));
         assertThat(snapshot.resources().rds())
             .containsExactly(new RdsInstance("db-1", "db.t3.micro", "mysql", true, 20, "available"));
         assertThat(snapshot.resources().s3().getFirst().sizeBytes()).isNull();
-        assertThat(snapshot.resources().countByType())
-            .containsEntry("EC2", 1).containsEntry("RDS", 1).containsEntry("S3", 1).containsEntry("LAMBDA", 0);
+        assertThat(snapshot.resources().lambda()).isEmpty();
 
         MetricStats expected = new MetricStats(10.5, 19.0, 20.0, 20);
-        assertThat(snapshot.usage().byResource().get("i-1")).isEqualTo(Map.of("CPUUtilization", expected));
-        assertThat(snapshot.usage().byResource().get("db-1"))
+        assertThat(snapshot.usage().byResource().get("EC2").get("i-1")).isEqualTo(Map.of("CPUUtilization", expected));
+        assertThat(snapshot.usage().byResource().get("RDS").get("db-1"))
             .isEqualTo(Map.of("CPUUtilization", expected, "DatabaseConnections", expected));
     }
 
@@ -143,13 +142,13 @@ class AwsInfraCollectorTest {
         });
 
         assertThat(snapshot.resources().ec2()).isNull();
-        assertThat(snapshot.resources().countByType()).containsEntry("EC2", null).containsEntry("RDS", 1);
         assertThat(snapshot.resources().rds()).hasSize(1);
-        assertThat(snapshot.usage().byResource()).containsEntry("db-1", null);
+        assertThat(snapshot.usage().byResource()).doesNotContainKey("EC2");
+        assertThat(snapshot.usage().byResource().get("RDS")).containsEntry("db-1", null);
         assertThat(snapshot.missing()).contains(
-            new Missing("EC2", "UnauthorizedOperation (HTTP 403)"),
-            new Missing("RDS 사용률", "Throttling (HTTP 400)"),
-            new Missing("S3 버킷 크기", "Throttling (HTTP 400)"));
+            new Missing("STRUCTURE EC2", "UnauthorizedOperation (HTTP 403)"),
+            new Missing("USAGE RDS", "Throttling (HTTP 400)"),
+            new Missing("USAGE S3", "Throttling (HTTP 400)"));
     }
 
     // 페이지네이터는 실제 구현을 써서 단건 호출 stub 으로 동작하게 한다
@@ -163,6 +162,7 @@ class AwsInfraCollectorTest {
         return Instance.builder()
             .instanceId(id)
             .instanceType("t3.micro")
+            .platformDetails("Linux/UNIX")
             .state(InstanceState.builder().name(state).build())
             .placement(Placement.builder().availabilityZone("ap-northeast-2a").build())
             .build();

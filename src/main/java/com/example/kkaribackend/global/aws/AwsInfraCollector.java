@@ -91,9 +91,17 @@ public class AwsInfraCollector {
             Resources resources = collectResources(clients, missing);
 
             onStep.accept(AnalysisStep.USAGE);
-            Map<String, Map<String, MetricStats>> usage = new LinkedHashMap<>();
-            collectEc2Usage(clients.cloudWatch(), resources.ec2(), usage, missing);
-            collectRdsUsage(clients.cloudWatch(), resources.rds(), usage, missing);
+            Map<String, Map<String, Map<String, MetricStats>>> usage = new LinkedHashMap<>();
+            if (resources.ec2() != null) {
+                usage.put("EC2", collectUsage(clients.cloudWatch(), "EC2", "AWS/EC2", "InstanceId",
+                    resources.ec2().stream().map(Ec2Instance::instanceId).toList(),
+                    List.of("CPUUtilization"), missing));
+            }
+            if (resources.rds() != null) {
+                usage.put("RDS", collectUsage(clients.cloudWatch(), "RDS", "AWS/RDS", "DBInstanceIdentifier",
+                    resources.rds().stream().map(RdsInstance::dbInstanceId).toList(),
+                    List.of("CPUUtilization", "DatabaseConnections"), missing));
+            }
 
             onStep.accept(AnalysisStep.COST);
             return InfraSnapshot.builder()
@@ -110,35 +118,37 @@ public class AwsInfraCollector {
     private Resources collectResources(Clients clients, List<Missing> missing) {
         Ec2Client ec2 = clients.ec2();
         return Resources.builder()
-            .ec2(attempt("EC2", missing, () -> ec2.describeInstancesPaginator(DescribeInstancesRequest.builder().build())
+            .ec2(attempt("STRUCTURE EC2", missing, () -> ec2
+                .describeInstancesPaginator(DescribeInstancesRequest.builder().build())
                 .reservations().stream()
                 .flatMap(reservation -> reservation.instances().stream())
                 .filter(i -> !GONE_EC2_STATES.contains(i.state().nameAsString()))
-                .map(i -> new Ec2Instance(i.instanceId(), i.instanceTypeAsString(), i.state().nameAsString(),
-                    i.placement().availabilityZone()))
+                .map(i -> new Ec2Instance(i.instanceId(), i.instanceTypeAsString(), i.platformDetails(),
+                    i.state().nameAsString(), i.placement().availabilityZone()))
                 .toList()))
-            .ebs(attempt("EBS", missing, () -> ec2.describeVolumesPaginator(DescribeVolumesRequest.builder().build())
+            .ebs(attempt("STRUCTURE EBS", missing, () -> ec2
+                .describeVolumesPaginator(DescribeVolumesRequest.builder().build())
                 .volumes().stream()
                 .map(v -> new EbsVolume(v.volumeId(), v.volumeTypeAsString(), v.size()))
                 .toList()))
-            .rds(attempt("RDS", missing, () -> clients.rds()
+            .rds(attempt("STRUCTURE RDS", missing, () -> clients.rds()
                 .describeDBInstancesPaginator(DescribeDbInstancesRequest.builder().build())
                 .dbInstances().stream()
                 .map(db -> new RdsInstance(db.dbInstanceIdentifier(), db.dbInstanceClass(), db.engine(), db.multiAZ(),
                     db.allocatedStorage(), db.dbInstanceStatus()))
                 .toList()))
             .s3(collectBuckets(clients, missing))
-            .lambda(attempt("LAMBDA", missing, () -> clients.lambda()
+            .lambda(attempt("STRUCTURE LAMBDA", missing, () -> clients.lambda()
                 .listFunctionsPaginator(ListFunctionsRequest.builder().build())
                 .functions().stream()
                 .map(f -> new LambdaFunction(f.functionName(), f.runtimeAsString(), f.memorySize()))
                 .toList()))
-            .loadBalancers(attempt("ELB", missing, () -> clients.elb()
+            .loadBalancers(attempt("STRUCTURE ELB", missing, () -> clients.elb()
                 .describeLoadBalancersPaginator(DescribeLoadBalancersRequest.builder().build())
                 .loadBalancers().stream()
                 .map(lb -> new LoadBalancer(lb.loadBalancerName(), lb.typeAsString()))
                 .toList()))
-            .natGateways(attempt("NAT", missing, () -> ec2
+            .natGateways(attempt("STRUCTURE NAT", missing, () -> ec2
                 .describeNatGatewaysPaginator(DescribeNatGatewaysRequest.builder().build())
                 .natGateways().stream()
                 .filter(nat -> !GONE_NAT_STATES.contains(nat.stateAsString()))
@@ -147,9 +157,9 @@ public class AwsInfraCollector {
             .build();
     }
 
-    // 버킷 크기는 CloudWatch 일 단위 지표라 최근 3일 중 가장 최근 값을 쓴다
+    // 버킷 크기는 CloudWatch 일 단위 지표라 최근 3일 중 가장 최근 값을 쓴다. 지표 조회 실패는 USAGE S3 로 남긴다
     private List<S3Bucket> collectBuckets(Clients clients, List<Missing> missing) {
-        List<String> names = attempt("S3", missing, () -> clients.s3()
+        List<String> names = attempt("STRUCTURE S3", missing, () -> clients.s3()
             .listBucketsPaginator(ListBucketsRequest.builder().bucketRegion(region).build())
             .buckets().stream()
             .map(Bucket::name)
@@ -163,7 +173,7 @@ public class AwsInfraCollector {
             queries.add(query(queries.size(), S3_SIZE_PERIOD_SECONDS, "AWS/S3", "BucketSizeBytes",
                 dimension("BucketName", name), dimension("StorageType", "StandardStorage")));
         }
-        Map<String, List<Double>> values = attempt("S3 버킷 크기", missing, () -> fetchMetrics(
+        Map<String, List<Double>> values = attempt("USAGE S3", missing, () -> fetchMetrics(
             clients.cloudWatch(), queries, Duration.ofDays(3)));
 
         List<S3Bucket> buckets = new ArrayList<>();
@@ -174,29 +184,11 @@ public class AwsInfraCollector {
         return buckets;
     }
 
-    private void collectEc2Usage(CloudWatchClient cloudWatch, List<Ec2Instance> instances,
-                                 Map<String, Map<String, MetricStats>> usage, List<Missing> missing) {
-        if (instances == null) {
-            return;
-        }
-        List<String> ids = instances.stream().map(Ec2Instance::instanceId).toList();
-        collectUsage(cloudWatch, "EC2 사용률", "AWS/EC2", "InstanceId", ids, List.of("CPUUtilization"), usage, missing);
-    }
-
-    private void collectRdsUsage(CloudWatchClient cloudWatch, List<RdsInstance> instances,
-                                 Map<String, Map<String, MetricStats>> usage, List<Missing> missing) {
-        if (instances == null) {
-            return;
-        }
-        List<String> ids = instances.stream().map(RdsInstance::dbInstanceId).toList();
-        collectUsage(cloudWatch, "RDS 사용률", "AWS/RDS", "DBInstanceIdentifier", ids,
-            List.of("CPUUtilization", "DatabaseConnections"), usage, missing);
-    }
-
-    // 실패하면 해당 리소스들의 사용률은 null
-    private void collectUsage(CloudWatchClient cloudWatch, String target, String namespace, String dimensionName,
-                              List<String> resourceIds, List<String> metricNames,
-                              Map<String, Map<String, MetricStats>> usage, List<Missing> missing) {
+    // 리소스 ID -> 지표 이름 -> 통계. 조회에 실패하면 리소스별 값이 null
+    private Map<String, Map<String, MetricStats>> collectUsage(CloudWatchClient cloudWatch, String type,
+                                                               String namespace, String dimensionName,
+                                                               List<String> resourceIds, List<String> metricNames,
+                                                               List<Missing> missing) {
         List<MetricDataQuery> queries = new ArrayList<>();
         for (String resourceId : resourceIds) {
             for (String metricName : metricNames) {
@@ -204,9 +196,10 @@ public class AwsInfraCollector {
                     dimension(dimensionName, resourceId)));
             }
         }
-        Map<String, List<Double>> values = attempt(target, missing, () -> fetchMetrics(
+        Map<String, List<Double>> values = attempt("USAGE " + type, missing, () -> fetchMetrics(
             cloudWatch, queries, Duration.ofDays(USAGE_DAYS)));
 
+        Map<String, Map<String, MetricStats>> usage = new LinkedHashMap<>();
         int index = 0;
         for (String resourceId : resourceIds) {
             if (values == null) {
@@ -220,6 +213,7 @@ public class AwsInfraCollector {
             }
             usage.put(resourceId, metrics);
         }
+        return usage;
     }
 
     // 쿼리 ID(m0, m1, ... 쿼리 순서) -> 값 목록(최신순)

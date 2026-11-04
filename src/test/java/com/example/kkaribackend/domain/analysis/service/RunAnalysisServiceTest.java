@@ -7,16 +7,12 @@ import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRep
 import com.example.kkaribackend.domain.project.domain.Project;
 import com.example.kkaribackend.global.aws.AwsConnectionProvider;
 import com.example.kkaribackend.global.aws.AwsInfraCollector;
-import com.example.kkaribackend.global.aws.dto.InfraSnapshot;
-import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Missing;
-import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Resources;
 import com.example.kkaribackend.global.aws.exception.AwsErrorCode;
 import com.example.kkaribackend.global.aws.exception.AwsException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 
@@ -46,21 +42,17 @@ class RunAnalysisServiceTest {
     }
 
     @Test
-    void 일부_수집이_실패해도_작업은_SUCCEEDED() {
-        InfraSnapshot snapshot = InfraSnapshot.builder()
-            .resources(Resources.builder().ebs(List.of()).build())
-            .missing(List.of(new Missing("EC2", "UnauthorizedOperation (HTTP 403)")))
-            .build();
+    void 예상하지_못한_예외가_나면_FAILED() {
         when(awsInfraCollector.collect(any(), any())).thenAnswer(invocation -> {
             invocation.<Consumer<AnalysisStep>>getArgument(1).accept(AnalysisStep.STRUCTURE);
-            return snapshot;
+            throw new IllegalStateException("boom");
         });
 
         service.execute(new AnalysisRequestedEvent(10L));
 
-        assertThat(job.getStatus()).isEqualTo(AnalysisStatus.SUCCEEDED);
+        assertThat(job.getStatus()).isEqualTo(AnalysisStatus.FAILED);
         assertThat(job.getStep()).isEqualTo(AnalysisStep.STRUCTURE);
-        assertThat(job.getResult()).contains("UnauthorizedOperation");
+        assertThat(job.getFailureReason()).isEqualTo("분석 중 예상하지 못한 오류가 발생했습니다.");
         assertThat(job.getFinishedAt()).isNotNull();
     }
 
@@ -72,7 +64,7 @@ class RunAnalysisServiceTest {
         service.execute(new AnalysisRequestedEvent(10L));
 
         assertThat(job.getStatus()).isEqualTo(AnalysisStatus.FAILED);
-        assertThat(job.getFailureReason()).isEqualTo("고객사 Role AssumeRole 실패: AWS 요청에 실패했습니다.");
+        assertThat(job.getFailureReason()).isEqualTo("AWS 요청에 실패했습니다.");
         assertThat(job.getResult()).isNull();
     }
 }

@@ -2,6 +2,7 @@ package com.example.kkaribackend.domain.analysis.service;
 
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.presentation.dto.response.AnalysisJobResponse;
+import com.example.kkaribackend.domain.analysis.presentation.dto.response.DiscoveryResponse;
 import com.example.kkaribackend.domain.project.domain.AwsConnectionStatus;
 import com.example.kkaribackend.domain.project.domain.Project;
 import com.example.kkaribackend.domain.project.domain.repository.ProjectRepository;
@@ -63,7 +64,7 @@ class AnalysisFlowTest {
             new CustomUserDetails(user.getId(), Role.MSP_ENGINEER), null, List.of()));
         when(awsInfraCollector.collect(any(), any())).thenReturn(InfraSnapshot.builder()
             .resources(Resources.builder()
-                .ec2(List.of(new Ec2Instance("i-1", "t3.micro", "running", "ap-northeast-2a")))
+                .ec2(List.of(new Ec2Instance("i-1", "t3.micro", "Linux/UNIX", "running", "ap-northeast-2a")))
                 .build())
             .missing(List.of())
             .build());
@@ -76,7 +77,8 @@ class AnalysisFlowTest {
             job = queryAnalysisJobService.execute(jobId);
         }
         assertThat(job.status()).isEqualTo(AnalysisStatus.SUCCEEDED);
-        assertThat(job.resourceCounts()).containsEntry("EC2", 1).containsEntry("RDS", null);
-        assertThat(queryDiscoveryService.execute(project.getId()).jobId()).isEqualTo(jobId);
+        DiscoveryResponse discovery = queryDiscoveryService.execute(project.getId());
+        assertThat(discovery.jobId()).isEqualTo(jobId);
+        assertThat(discovery.result().resources().ec2()).hasSize(1);
     }
 }
