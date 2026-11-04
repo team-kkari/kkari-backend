@@ -1,6 +1,6 @@
-package com.example.kkaribackend.domain.engagement.domain;
+package com.example.kkaribackend.domain.project.domain;
 
-public enum EngagementStage {
+public enum ProjectStage {
     RECEIVED,   // 의뢰 접수
     DESIGN,     // 설계
     REVIEW,     // 검토
