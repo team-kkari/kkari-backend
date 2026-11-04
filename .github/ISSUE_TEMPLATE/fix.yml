@@ -1,0 +1,32 @@
+name: "Bug"
+description: "서비스의 버그를 수정합니다.🛠️"
+title: "[Fix] "
+labels: 버그 수정
+body:
+
+  - type: textarea
+    attributes:
+      label: Describe
+      description: |
+        [설명] 버그에 관한 설명을 간단하게 작성해주세요.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Reproduce
+      description: |
+        [재현 방법] 버그를 재현하는 단계를 작성해주세요. (요청 API, 파라미터 등)
+      value: |
+        1. 
+        2. 
+        3. 
+
+  - type: textarea
+    attributes:
+      label: Expected / Actual
+      description: |
+        [예상 동작 / 실제 동작] 정상이라면 어떻게 동작해야 하는지, 실제로는 어떻게 되는지 작성해주세요. (에러 로그, 응답 등)
+      value: |
+        - 예상: 
+        - 실제: 
