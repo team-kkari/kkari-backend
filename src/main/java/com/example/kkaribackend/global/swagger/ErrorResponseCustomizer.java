@@ -56,6 +56,7 @@ public class ErrorResponseCustomizer implements GlobalOperationCustomizer {
     );
 
     private final ThrownErrorCodeResolver thrownErrorCodeResolver;
+    private final SecurityErrorCodeResolver securityErrorCodeResolver;
 
     @Override
     public Operation customize(Operation operation, HandlerMethod handlerMethod) {
@@ -63,6 +64,7 @@ public class ErrorResponseCustomizer implements GlobalOperationCustomizer {
         if (hasRequestInput(handlerMethod)) {
             errorCodes.add(GlobalErrorCode.INVALID_INPUT);
         }
+        errorCodes.addAll(securityErrorCodeResolver.resolve(handlerMethod));
         errorCodes.addAll(thrownErrorCodeResolver.resolve(handlerMethod.getMethod()));
         errorCodes.addAll(COMMON_ERROR_CODES);
 

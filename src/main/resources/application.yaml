@@ -2,15 +2,39 @@ spring:
   application:
     name: kkari-backend
 
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/kkari}
+    username: ${DB_USERNAME:kkari}
+    password: ${DB_PASSWORD:kkari}
+
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:update}
+    open-in-view: false
+    show-sql: ${JPA_SHOW_SQL:false}
+
 springdoc:
   api-docs:
     enabled: ${SWAGGER_ENABLED:true}
   swagger-ui:
     enabled: ${SWAGGER_ENABLED:true}
     tags-sorter: alpha
+    persist-authorization: true
     operations-sorter: method
   default-produces-media-type: application/json
   override-with-generic-response: false
+
+jwt:
+  header: ${JWT_HEADER:Authorization}
+  prefix: ${JWT_PREFIX:Bearer }
+  secret: ${JWT_SECRET}
+  access-exp: ${JWT_ACCESS_EXP:3600}
+
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+
+aws:
+  region: ${AWS_REGION:ap-northeast-2}
 
 ai-server:
   url: ${AI_SERVER_URL:http://localhost:8000}
