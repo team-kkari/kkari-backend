@@ -6,3 +6,6 @@ spring:
   jpa:
     hibernate:
       ddl-auto: create-drop
+
+jwt:
+  secret: test-secret-key-for-kkari-backend-0123456789
