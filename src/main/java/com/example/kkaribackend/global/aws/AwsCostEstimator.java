@@ -1,7 +1,9 @@
 package com.example.kkaribackend.global.aws;
 
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Cost;
+import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Ec2Instance;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Missing;
+import com.example.kkaribackend.global.aws.dto.InfraSnapshot.RdsInstance;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Resources;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -82,16 +84,9 @@ public class AwsCostEstimator {
 
         if (resources.ec2() != null) {
             Map<String, BigDecimal> costs = typeMap(monthly, "EC2");
-            resources.ec2().forEach(i -> costs.put(i.instanceId(),
-                "stopped".equals(i.state()) ? BigDecimal.ZERO
-                    : !LINUX.equals(i.platform()) ? unpriced(missing, "EC2", i.instanceId(),
-                        "Linux/UNIX 가 아닌 플랫폼은 추정하지 않습니다: " + i.platform())
-                    : perMonth(prices.find("EC2", i.instanceId(), "AmazonEC2", "Hrs", Map.of(
-                        "instanceType", i.instanceType(),
-                        "operatingSystem", "Linux",
-                        "tenancy", "Shared",
-                        "preInstalledSw", "NA",
-                        "capacitystatus", "Used")))));
+            for (Ec2Instance instance : resources.ec2()) {
+                costs.put(instance.instanceId(), ec2Cost(instance, prices, missing));
+            }
         }
         if (resources.ebs() != null) {
             Map<String, BigDecimal> costs = typeMap(monthly, "EBS");
@@ -103,16 +98,9 @@ public class AwsCostEstimator {
         }
         if (resources.rds() != null) {
             Map<String, BigDecimal> costs = typeMap(monthly, "RDS");
-            resources.rds().forEach(db -> {
-                String engine = RDS_ENGINES.get(db.engine());
-                costs.put(db.dbInstanceId(), "stopped".equals(db.status()) ? BigDecimal.ZERO
-                    : engine == null ? unpriced(missing, "RDS", db.dbInstanceId(),
-                        "가격 조회를 지원하지 않는 엔진입니다: " + db.engine())
-                    : perMonth(prices.find("RDS", db.dbInstanceId(), "AmazonRDS", "Hrs", Map.of(
-                        "instanceType", db.instanceClass(),
-                        "databaseEngine", engine,
-                        "deploymentOption", Boolean.TRUE.equals(db.multiAz()) ? "Multi-AZ" : "Single-AZ"))));
-            });
+            for (RdsInstance db : resources.rds()) {
+                costs.put(db.dbInstanceId(), rdsCost(db, prices, missing));
+            }
         }
         if (resources.s3() != null) {
             Map<String, BigDecimal> costs = typeMap(monthly, "S3");
@@ -125,8 +113,10 @@ public class AwsCostEstimator {
         }
         if (resources.lambda() != null) {
             Map<String, BigDecimal> costs = typeMap(monthly, "LAMBDA");
-            resources.lambda().forEach(f -> costs.put(f.functionName(),
-                unpriced(missing, "LAMBDA", f.functionName(), "요청 수·실행 시간에 따라 달라져 추정하지 않습니다.")));
+            resources.lambda().forEach(f -> costs.put(f.functionName(), null));
+            if (!resources.lambda().isEmpty()) {
+                missing.add(new Missing("COST LAMBDA", "요청 수·실행 시간에 따라 달라져 추정하지 않습니다."));
+            }
         }
         if (resources.loadBalancers() != null) {
             Map<String, BigDecimal> costs = typeMap(monthly, "ELB");
@@ -143,6 +133,36 @@ public class AwsCostEstimator {
                 prices.find("NAT", nat.natGatewayId(), "AmazonEC2", "Hrs", Map.of("productFamily", "NAT Gateway")))));
         }
         return cost(monthly);
+    }
+
+    private static BigDecimal ec2Cost(Ec2Instance instance, PriceLookup prices, List<Missing> missing) {
+        if ("stopped".equals(instance.state())) {
+            return BigDecimal.ZERO;
+        }
+        if (!LINUX.equals(instance.platform())) {
+            return unpriced(missing, "EC2", instance.instanceId(),
+                "Linux/UNIX 가 아닌 플랫폼은 추정하지 않습니다: " + instance.platform());
+        }
+        return perMonth(prices.find("EC2", instance.instanceId(), "AmazonEC2", "Hrs", Map.of(
+            "instanceType", instance.instanceType(),
+            "operatingSystem", "Linux",
+            "tenancy", "Shared",
+            "preInstalledSw", "NA",
+            "capacitystatus", "Used")));
+    }
+
+    private static BigDecimal rdsCost(RdsInstance db, PriceLookup prices, List<Missing> missing) {
+        if ("stopped".equals(db.status())) {
+            return BigDecimal.ZERO;
+        }
+        String engine = RDS_ENGINES.get(db.engine());
+        if (engine == null) {
+            return unpriced(missing, "RDS", db.dbInstanceId(), "가격 조회를 지원하지 않는 엔진입니다: " + db.engine());
+        }
+        return perMonth(prices.find("RDS", db.dbInstanceId(), "AmazonRDS", "Hrs", Map.of(
+            "instanceType", db.instanceClass(),
+            "databaseEngine", engine,
+            "deploymentOption", Boolean.TRUE.equals(db.multiAz()) ? "Multi-AZ" : "Single-AZ")));
     }
 
     private static Map<String, BigDecimal> typeMap(Map<String, Map<String, BigDecimal>> monthly, String type) {

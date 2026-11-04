@@ -1,6 +1,7 @@
 package com.example.kkaribackend.domain.analysis.service;
 
 import com.example.kkaribackend.domain.analysis.domain.AnalysisJob;
+import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
 import com.example.kkaribackend.domain.project.domain.Project;
 import com.example.kkaribackend.global.aws.AwsConnectionProvider;
@@ -32,6 +33,10 @@ public class RunAnalysisService {
     @TransactionalEventListener
     public void execute(AnalysisRequestedEvent event) {
         AnalysisJob job = analysisJobRepository.findWithProjectById(event.jobId()).orElseThrow();
+        // 실행 전에 시간 초과로 실패 처리된 작업은 다시 돌리지 않는다
+        if (job.getStatus() != AnalysisStatus.QUEUED) {
+            return;
+        }
         Project project = job.getProject();
         job.start();
         analysisJobRepository.save(job);

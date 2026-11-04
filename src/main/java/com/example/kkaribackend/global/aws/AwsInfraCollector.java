@@ -2,6 +2,7 @@ package com.example.kkaribackend.global.aws;
 
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStep;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot;
+import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Cost;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.EbsVolume;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Ec2Instance;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.LambdaFunction;
@@ -104,12 +105,14 @@ public class AwsInfraCollector {
             }
 
             onStep.accept(AnalysisStep.COST);
+            Cost cost = costEstimator.estimate(resources, missing);
+
             return InfraSnapshot.builder()
                 .region(region)
                 .collectedAt(Instant.now())
                 .resources(resources)
                 .usage(new Usage(USAGE_DAYS, USAGE_PERIOD_SECONDS, "Average", usage))
-                .cost(costEstimator.estimate(resources, missing))
+                .cost(cost)
                 .missing(missing)
                 .build();
         }
@@ -200,13 +203,13 @@ public class AwsInfraCollector {
             cloudWatch, queries, Duration.ofDays(USAGE_DAYS)));
 
         Map<String, Map<String, MetricStats>> usage = new LinkedHashMap<>();
+        if (values == null) {
+            resourceIds.forEach(resourceId -> usage.put(resourceId, null));
+            return usage;
+        }
+
         int index = 0;
         for (String resourceId : resourceIds) {
-            if (values == null) {
-                usage.put(resourceId, null);
-                index += metricNames.size();
-                continue;
-            }
             Map<String, MetricStats> metrics = new LinkedHashMap<>();
             for (String metricName : metricNames) {
                 metrics.put(metricName, stats(values.getOrDefault(queryId(index++), List.of())));

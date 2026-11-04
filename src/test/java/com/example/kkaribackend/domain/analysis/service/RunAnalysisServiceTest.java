@@ -20,17 +20,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class RunAnalysisServiceTest {
     private AwsConnectionProvider awsConnectionProvider;
     private AwsInfraCollector awsInfraCollector;
     private RunAnalysisService service;
+    private AnalysisJobRepository analysisJobRepository;
     private AnalysisJob job;
 
     @BeforeEach
     void setUp() {
-        AnalysisJobRepository analysisJobRepository = mock(AnalysisJobRepository.class);
+        analysisJobRepository = mock(AnalysisJobRepository.class);
         awsConnectionProvider = mock(AwsConnectionProvider.class);
         awsInfraCollector = mock(AwsInfraCollector.class);
         service = new RunAnalysisService(analysisJobRepository, awsConnectionProvider, awsInfraCollector,
@@ -54,6 +58,17 @@ class RunAnalysisServiceTest {
         assertThat(job.getStep()).isEqualTo(AnalysisStep.STRUCTURE);
         assertThat(job.getFailureReason()).isEqualTo("분석 중 예상하지 못한 오류가 발생했습니다.");
         assertThat(job.getFinishedAt()).isNotNull();
+    }
+
+    @Test
+    void 이미_실패_처리된_작업은_실행하지_않는다() {
+        job.fail("시간 초과로 중단되었습니다.");
+
+        service.execute(new AnalysisRequestedEvent(10L));
+
+        assertThat(job.getStatus()).isEqualTo(AnalysisStatus.FAILED);
+        verifyNoInteractions(awsConnectionProvider, awsInfraCollector);
+        verify(analysisJobRepository, never()).save(any());
     }
 
     @Test

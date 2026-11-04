@@ -85,14 +85,14 @@ class AwsCostEstimatorTest {
     void 종류가_다르면_같은_이름이어도_비용이_따로_남는다() {
         Resources resources = Resources.builder()
             .s3(List.of(new S3Bucket("app", 4L << 30)))
-            .lambda(List.of(new LambdaFunction("app", "java21", 512)))
+            .lambda(List.of(new LambdaFunction("app", "java21", 512), new LambdaFunction("worker", "python3.12", 128)))
             .build();
 
         Cost cost = estimator().estimate(resources, missing);
 
         assertThat(cost.monthlyUsdByResource().get("S3")).containsEntry("app", new BigDecimal("0.10"));
-        assertThat(cost.monthlyUsdByResource().get("LAMBDA")).containsEntry("app", null);
-        assertThat(missing).extracting(Missing::target).containsExactly("COST LAMBDA app");
+        assertThat(cost.monthlyUsdByResource().get("LAMBDA")).containsEntry("app", null).containsEntry("worker", null);
+        assertThat(missing).extracting(Missing::target).containsExactly("COST LAMBDA");
     }
 
     @Test
