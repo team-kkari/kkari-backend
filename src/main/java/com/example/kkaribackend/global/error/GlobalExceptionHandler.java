@@ -7,6 +7,7 @@ import com.example.kkaribackend.global.error.response.ValidErrorResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -38,7 +39,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     protected ResponseEntity<ValidErrorResponse> handleValidation(MethodArgumentNotValidException e) {
-        log.warn("{}: {}", e.getClass().getSimpleName(), e.getBindingResult().getFieldErrors());
+        // FieldError.toString()에는 입력값이 들어가므로 필드 이름만 남긴다
+        log.warn("{}: {}", e.getClass().getSimpleName(),
+            e.getBindingResult().getFieldErrors().stream().map(FieldError::getField).toList());
         return ResponseEntity
             .status(GlobalErrorCode.INVALID_INPUT.getStatus())
             .body(ValidErrorResponse.of(GlobalErrorCode.INVALID_INPUT, e.getBindingResult()));

@@ -29,10 +29,4 @@ public record ErrorResponse (
             .message(errorCode.getMessage())
             .build();
     }
-
-    public record FieldError(
-        String field,
-        String value,
-        String reason
-    ) { }
 }

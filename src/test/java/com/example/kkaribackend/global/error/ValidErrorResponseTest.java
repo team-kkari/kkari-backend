@@ -30,6 +30,7 @@ class ValidErrorResponseTest {
                     """))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.errors[0].field").value("password"))
+            .andExpect(jsonPath("$.errors[0].value").doesNotExist())
             .andExpect(content().string(not(containsString("short"))));
     }
 }
