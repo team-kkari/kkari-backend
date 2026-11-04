@@ -29,14 +29,12 @@ public record ValidErrorResponse (
     @Builder
     public record FieldErrorDetail(
         String field,
-        String value,
         String reason
     ) {
+        // 비밀번호 같은 입력값이 노출되지 않도록 거부된 값은 응답하지 않는다
         public static FieldErrorDetail from(FieldError fieldError) {
             return FieldErrorDetail.builder()
                 .field(fieldError.getField())
-                // 배포 후에는 보안때문에 삭제
-                .value(fieldError.getRejectedValue() != null ? fieldError.getRejectedValue().toString() : null)
                 .reason(fieldError.getDefaultMessage()).build();
         }
     }
