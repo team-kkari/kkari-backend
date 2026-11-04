@@ -64,16 +64,20 @@ public class AwsConnectionProvider {
         return accountId;
     }
 
-    public AwsConnectionStatus testConnection(String roleArn, String externalId, String sessionName) {
-        Credentials credentials;
+    // 고객사 리소스를 조회할 1시간짜리 임시 자격증명. 거부도 일반 실패(AW001)로 던진다
+    public AwsCredentialsProvider assumeRole(String roleArn, String externalId, String sessionName) {
         try {
-            credentials = stsClient.assumeRole(AssumeRoleRequest.builder()
-                .roleArn(roleArn)
-                .externalId(externalId)
-                .roleSessionName(sessionName)
-                .durationSeconds(SESSION_SECONDS)
-                .build()
-            ).credentials();
+            return assume(roleArn, externalId, sessionName);
+        } catch (StsException e) {
+            log.warn("AssumeRole 실패: {} {}", roleArn, e.statusCode());
+            throw new AwsException(AwsErrorCode.AWS_REQUEST_FAILED);
+        }
+    }
+
+    public AwsConnectionStatus testConnection(String roleArn, String externalId, String sessionName) {
+        AwsCredentialsProvider customerCredentials;
+        try {
+            customerCredentials = assume(roleArn, externalId, sessionName);
         } catch (StsException e) {
             if (e.statusCode() == 403) {
                 log.info("AssumeRole 거부: {} {}", roleArn, e.awsErrorDetails().errorMessage());
@@ -81,13 +85,7 @@ public class AwsConnectionProvider {
             }
             log.error("AssumeRole 실패: {}", roleArn, e);
             throw new AwsException(AwsErrorCode.AWS_REQUEST_FAILED);
-        } catch (SdkClientException e) {
-            log.error("서버 AWS 자격증명을 불러오지 못했습니다.", e);
-            throw new AwsException(AwsErrorCode.AWS_CREDENTIALS_UNAVAILABLE);
         }
-
-        AwsCredentialsProvider customerCredentials = StaticCredentialsProvider.create(AwsSessionCredentials.create(
-            credentials.accessKeyId(), credentials.secretAccessKey(), credentials.sessionToken()));
 
         // 읽기 권한 확인: ReadOnlyAccess 에 포함된 가벼운 호출
         try (Ec2Client ec2 = ec2ClientFactory.apply(customerCredentials)) {
@@ -104,5 +102,23 @@ public class AwsConnectionProvider {
             log.error("DescribeRegions 실패: {}", roleArn, e);
             throw new AwsException(AwsErrorCode.AWS_REQUEST_FAILED);
         }
+    }
+
+    private AwsCredentialsProvider assume(String roleArn, String externalId, String sessionName) {
+        Credentials credentials;
+        try {
+            credentials = stsClient.assumeRole(AssumeRoleRequest.builder()
+                .roleArn(roleArn)
+                .externalId(externalId)
+                .roleSessionName(sessionName)
+                .durationSeconds(SESSION_SECONDS)
+                .build()
+            ).credentials();
+        } catch (SdkClientException e) {
+            log.error("서버 AWS 자격증명을 불러오지 못했습니다.", e);
+            throw new AwsException(AwsErrorCode.AWS_CREDENTIALS_UNAVAILABLE);
+        }
+        return StaticCredentialsProvider.create(AwsSessionCredentials.create(
+            credentials.accessKeyId(), credentials.secretAccessKey(), credentials.sessionToken()));
     }
 }
