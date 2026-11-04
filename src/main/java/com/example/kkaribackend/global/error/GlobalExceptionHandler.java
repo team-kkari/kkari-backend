@@ -77,7 +77,8 @@ public class GlobalExceptionHandler {
 
 
     private ResponseEntity<ErrorResponse> respond(ErrorProperty errorCode, Exception e) {
-        log.warn("{}: {}", e.getClass().getSimpleName(), e.getMessage());
+        // 요청 파싱·바인딩 예외 메시지에는 입력값이 들어갈 수 있어 예외 이름만 남긴다
+        log.warn("{}: {}", e.getClass().getSimpleName(), errorCode.getCode());
         return ResponseEntity
             .status(errorCode.getStatus())
             .body(ErrorResponse.of(errorCode));

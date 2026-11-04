@@ -26,11 +26,11 @@ class ValidErrorResponseTest {
         mockMvc.perform(post("/v1/auth/signup")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                    {"email":"a@test.com","password":"short","name":"n","companyName":"c"}
+                    {"email":"a@test.com","password":"Zq9!lk","name":"n","companyName":"c"}
                     """))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.errors[0].field").value("password"))
             .andExpect(jsonPath("$.errors[0].value").doesNotExist())
-            .andExpect(content().string(not(containsString("short"))));
+            .andExpect(content().string(not(containsString("Zq9!lk"))));
     }
 }
