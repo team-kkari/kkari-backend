@@ -28,6 +28,9 @@ dependencies {
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.13.0'
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.1'
     runtimeOnly 'org.postgresql:postgresql'
+    implementation platform('software.amazon.awssdk:bom:2.42.23')
+    implementation 'software.amazon.awssdk:sts'
+    implementation 'software.amazon.awssdk:ec2'
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'

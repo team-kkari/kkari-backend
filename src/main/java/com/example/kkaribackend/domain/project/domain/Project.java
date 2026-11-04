@@ -7,6 +7,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -42,6 +43,19 @@ public class Project {
     @Column(length = 20, nullable = false)
     private ProjectStage stage = ProjectStage.RECEIVED;
 
+    // 고객사 Role 신뢰 정책에 넣을 값. 서버가 생성하고 바꾸지 않는다
+    @Builder.Default
+    @Column(length = 36, nullable = false, unique = true, updatable = false)
+    private String externalId = UUID.randomUUID().toString();
+
+    @Column(length = 2048)
+    private String roleArn;
+
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20, nullable = false)
+    private AwsConnectionStatus awsConnectionStatus = AwsConnectionStatus.NOT_CONNECTED;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -49,4 +63,13 @@ public class Project {
     @UpdateTimestamp
     @Column(nullable = false)
     private LocalDateTime updatedAt;
+
+    public void registerRoleArn(String roleArn) {
+        this.roleArn = roleArn;
+        this.awsConnectionStatus = AwsConnectionStatus.UNTESTED;
+    }
+
+    public void updateAwsConnectionStatus(AwsConnectionStatus awsConnectionStatus) {
+        this.awsConnectionStatus = awsConnectionStatus;
+    }
 }
