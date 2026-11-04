@@ -2,6 +2,17 @@ spring:
   application:
     name: kkari-backend
 
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/kkari}
+    username: ${DB_USERNAME:kkari}
+    password: ${DB_PASSWORD:kkari}
+
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:update}
+    open-in-view: false
+    show-sql: ${JPA_SHOW_SQL:false}
+
 springdoc:
   api-docs:
     enabled: ${SWAGGER_ENABLED:true}
