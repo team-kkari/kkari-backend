@@ -11,3 +11,6 @@ springdoc:
     operations-sorter: method
   default-produces-media-type: application/json
   override-with-generic-response: false
+
+ai-server:
+  url: ${AI_SERVER_URL:http://localhost:8000}
