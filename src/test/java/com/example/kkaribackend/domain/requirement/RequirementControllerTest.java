@@ -47,9 +47,13 @@ class RequirementControllerTest {
         Project project = projectRepository.save(Project.builder()
             .user(user).companyName("고객사").contactName("담당자").build());
 
-        CustomUserDetails principal = new CustomUserDetails(user.getId(), user.getRole());
-        owner = authentication(UsernamePasswordAuthenticationToken.authenticated(principal, null, principal.getAuthorities()));
+        owner = loginAs(user.getId());
         url = "/v1/projects/" + project.getId() + "/requirements";
+    }
+
+    private RequestPostProcessor loginAs(Long userId) {
+        CustomUserDetails principal = new CustomUserDetails(userId, Role.MSP_ENGINEER);
+        return authentication(UsernamePasswordAuthenticationToken.authenticated(principal, null, principal.getAuthorities()));
     }
 
     @AfterEach
@@ -76,6 +80,21 @@ class RequirementControllerTest {
             .andExpect(jsonPath("$.currency").value("USD"))
             .andExpect(jsonPath("$.containsPersonalData").value(true))
             .andExpect(jsonPath("$.frozenResources[0]").value("prod-rds"));
+    }
+
+    @Test
+    void 담당하지_않는_프로젝트면_403() throws Exception {
+        User other = userRepository.save(User.builder()
+            .email("other@kkari.com").password("x").name("다른 엔지니어").companyName("까리")
+            .role(Role.MSP_ENGINEER).build());
+        RequestPostProcessor stranger = loginAs(other.getId());
+
+        mockMvc.perform(put(url).with(stranger).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("P002"));
+        mockMvc.perform(get(url).with(stranger))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("P002"));
     }
 
     @Test

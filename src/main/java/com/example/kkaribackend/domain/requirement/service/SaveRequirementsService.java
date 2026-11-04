@@ -16,7 +16,8 @@ public class SaveRequirementsService {
     @Transactional
     public Requirements execute(Long projectId, SaveRequirementsRequest request) {
         Project project = projectFacade.getAssignedProject(projectId);
-        project.updateRequirements(request.toRequirements());
-        return project.getRequirements();
+        Requirements requirements = request.toRequirements();
+        project.updateRequirements(requirements);
+        return requirements;
     }
 }

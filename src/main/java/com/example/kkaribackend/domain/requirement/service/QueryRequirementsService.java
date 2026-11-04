@@ -1,6 +1,5 @@
 package com.example.kkaribackend.domain.requirement.service;
 
-import com.example.kkaribackend.domain.project.domain.Project;
 import com.example.kkaribackend.domain.project.domain.Requirements;
 import com.example.kkaribackend.domain.project.facade.ProjectFacade;
 import com.example.kkaribackend.domain.requirement.exception.RequirementsNotFoundException;
@@ -15,10 +14,10 @@ public class QueryRequirementsService {
 
     @Transactional(readOnly = true)
     public Requirements execute(Long projectId) {
-        Project project = projectFacade.getAssignedProject(projectId);
-        if (project.getRequirements() == null) {
+        Requirements requirements = projectFacade.getAssignedProject(projectId).getRequirements();
+        if (requirements == null) {
             throw new RequirementsNotFoundException();
         }
-        return project.getRequirements();
+        return requirements;
     }
 }
