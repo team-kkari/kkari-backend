@@ -1,3 +1,13 @@
 spring:
   application:
     name: kkari-backend
+
+springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:true}
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:true}
+    tags-sorter: alpha
+    operations-sorter: method
+  default-produces-media-type: application/json
+  override-with-generic-response: false
