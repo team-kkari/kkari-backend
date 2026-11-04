@@ -35,3 +35,6 @@ cors:
 
 aws:
   region: ${AWS_REGION:ap-northeast-2}
+
+ai-server:
+  url: ${AI_SERVER_URL:http://localhost:8000}
