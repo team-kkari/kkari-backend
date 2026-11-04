@@ -28,7 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class RequirementControllerTest {
 
     private static final String VALID_BODY = """
-        {"content":"트래픽 급증에도 버티는 구조","priorities":["COST","SECURITY","COST"],
+        {"content":"트래픽 급증에도 버티는 구조","priorities":["COST","SECURITY"],
          "desiredArchitecture":"EKS","monthlyBudget":1500.50,"currency":"USD",
          "containsPersonalData":true,"frozenResources":["prod-rds"]}""";
 
@@ -87,11 +87,23 @@ class RequirementControllerTest {
     }
 
     @Test
-    void 예산만_있고_통화가_없으면_400() throws Exception {
-        mockMvc.perform(put(url).with(owner).contentType(MediaType.APPLICATION_JSON)
-                .content(VALID_BODY.replace("\"currency\":\"USD\",", "")))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.errors[0].field").value("currencyGivenWithBudget"));
+    void 다시_저장하면_이전_요구사항을_통째로_교체한다() throws Exception {
+        mockMvc.perform(put(url).with(owner).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+            .andExpect(status().isOk());
+        mockMvc.perform(put(url).with(owner).contentType(MediaType.APPLICATION_JSON).content("""
+                {"content":"비용 절감","priorities":["PERFORMANCE"],"containsPersonalData":false}"""))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(get(url).with(owner))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.content").value("비용 절감"))
+            .andExpect(jsonPath("$.priorities.length()").value(1))
+            .andExpect(jsonPath("$.priorities[0]").value("PERFORMANCE"))
+            .andExpect(jsonPath("$.desiredArchitecture").doesNotExist())
+            .andExpect(jsonPath("$.monthlyBudget").doesNotExist())
+            .andExpect(jsonPath("$.currency").doesNotExist())
+            .andExpect(jsonPath("$.containsPersonalData").value(false))
+            .andExpect(jsonPath("$.frozenResources.length()").value(0));
     }
 
     @Test

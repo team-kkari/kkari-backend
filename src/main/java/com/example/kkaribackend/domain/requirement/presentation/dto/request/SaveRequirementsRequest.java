@@ -2,7 +2,6 @@ package com.example.kkaribackend.domain.requirement.presentation.dto.request;
 
 import com.example.kkaribackend.domain.project.domain.Priority;
 import com.example.kkaribackend.domain.project.domain.Requirements;
-import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
@@ -40,15 +39,10 @@ public record SaveRequirementsRequest(
     List<@NotBlank(message = "변경 금지 리소스는 비어있을 수 없습니다.")
          @Size(max = 200, message = "변경 금지 리소스는 200자 이하여야 합니다.") String> frozenResources
 ) {
-    @AssertTrue(message = "월 예산을 입력하면 통화도 입력해야 합니다.")
-    private boolean isCurrencyGivenWithBudget() {
-        return monthlyBudget == null || currency != null;
-    }
-
     public Requirements toRequirements() {
         return Requirements.builder()
             .content(content)
-            .priorities(priorities.stream().distinct().toList())
+            .priorities(priorities)
             .desiredArchitecture(desiredArchitecture)
             .monthlyBudget(monthlyBudget)
             .currency(currency)
