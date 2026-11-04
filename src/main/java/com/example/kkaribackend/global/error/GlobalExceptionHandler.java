@@ -4,6 +4,7 @@ import com.example.kkaribackend.global.error.exception.ErrorProperty;
 import com.example.kkaribackend.global.error.exception.GlobalErrorCode;
 import com.example.kkaribackend.global.error.response.ErrorResponse;
 import com.example.kkaribackend.global.error.response.ValidErrorResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -16,6 +17,8 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
@@ -77,8 +80,9 @@ public class GlobalExceptionHandler {
 
 
     private ResponseEntity<ErrorResponse> respond(ErrorProperty errorCode, Exception e) {
-        // 요청 파싱·바인딩 예외 메시지에는 입력값이 들어갈 수 있어 예외 이름만 남긴다
-        log.warn("{}: {}", e.getClass().getSimpleName(), errorCode.getCode());
+        // 요청 파싱·바인딩 예외 메시지에는 입력값이 들어갈 수 있어 메시지 대신 요청 경로만 남긴다
+        HttpServletRequest request = ((ServletRequestAttributes) RequestContextHolder.currentRequestAttributes()).getRequest();
+        log.warn("{}: {} {}", e.getClass().getSimpleName(), request.getMethod(), request.getRequestURI());
         return ResponseEntity
             .status(errorCode.getStatus())
             .body(ErrorResponse.of(errorCode));
