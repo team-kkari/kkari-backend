@@ -22,7 +22,7 @@ spring:
       file-size-threshold: 6MB
 
   # @Async 실행기. 인프라 분석은 AWS 호출이 많아 동시에 2개까지 돌리고 나머지는 큐에서 기다린다
-  # 종료할 때 진행 중인 분석이 임시 가격 견적을 지울 때까지 기다린 뒤 AWS 클라이언트를 닫는다
+  # 종료할 때 진행 중인 분석이 끝날 때까지 기다린 뒤 AWS 클라이언트를 닫는다
   task:
     execution:
       pool:
@@ -58,8 +58,7 @@ cors:
 
 aws:
   region: ${AWS_REGION:ap-northeast-2}
-  # AWS Pricing Calculator 전용 계정 키. 비어 있으면 예상 비용 없이 분석한다.
-  # 임시 견적은 kkari- 로 시작하고 호출마다 지운다. 지우지 못해 남은 것은 list-workload-estimates 로 찾아 지운다
+  # Price List API 전용 계정 키. 비어 있으면 예상 비용 없이 분석한다
   pricing:
     access-key: ${PRICING_AWS_ACCESS_KEY_ID:}
     secret-key: ${PRICING_AWS_SECRET_ACCESS_KEY:}

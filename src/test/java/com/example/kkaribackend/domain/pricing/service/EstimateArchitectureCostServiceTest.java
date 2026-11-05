@@ -67,7 +67,7 @@ class EstimateArchitectureCostServiceTest {
         return Stream.of(
             kind("ec2", p -> p.spec("m7g.large"),
                 tuple("AmazonEC2", "APN2-BoxUsage:m7g.large", "RunInstances", 1460.0),
-                tuple("AmazonEC2", "APN2-EBS:VolumeUsage.gp3", "CreateVolume-Gp3", 200.0)),
+                tuple("AmazonEC2", "APN2-EBS:VolumeUsage.gp3", "", 200.0)),
             kind("rds", p -> p.spec("db.m5.large").engine("PostgreSQL").multiAz(true),
                 tuple("AmazonRDS", "APN2-Multi-AZUsage:db.m5.large", "CreateDBInstance:0014", 1460.0),
                 tuple("AmazonRDS", "APN2-RDS:Multi-AZ-GP3-Storage", "CreateDBInstance:0014", 100.0)),
@@ -99,7 +99,7 @@ class EstimateArchitectureCostServiceTest {
             kind("efs", p -> p,
                 tuple("AmazonEFS", "APN2-TimedStorage-ByteHrs", "", 100.0)),
             kind("ebs", p -> p.spec("io1"),
-                tuple("AmazonEC2", "APN2-EBS:VolumeUsage.piops", "CreateVolume-P-IOPS", 100.0)),
+                tuple("AmazonEC2", "APN2-EBS:VolumeUsage.piops", "", 100.0)),
             kind("lambda", p -> p.spec("arm"),
                 tuple("AWSLambda", "APN2-Request-ARM", "", 3e6),
                 tuple("AWSLambda", "APN2-Lambda-GB-Second-ARM", "", 600000.0)),
@@ -167,7 +167,7 @@ class EstimateArchitectureCostServiceTest {
     @Test
     void 추정할_수_없는_구성요소는_null이고_합계에서_빠진다() {
         priceOf = line -> line.primaryUsageType().contains("nope")
-            ? LinePrice.unpriced("가격 계산 실패: BAD_REQUEST") : LinePrice.priced(PRICE);
+            ? LinePrice.unpriced("AWS Price List 에 온디맨드 단가가 없습니다.") : LinePrice.priced(PRICE);
 
         CostReport report = estimate(
             node("users", pricing("free").build()),
@@ -182,7 +182,7 @@ class EstimateArchitectureCostServiceTest {
             CostReport.Item::formula).containsExactly(
             tuple("users", BigDecimal.ZERO, "무료"),
             tuple("web", PRICE, "APN2-BoxUsage:t3.micro 1460 = 1.25 $"),
-            tuple("bad-type", null, "가격 계산 실패: BAD_REQUEST — 추정 불가"),
+            tuple("bad-type", null, "AWS Price List 에 온디맨드 단가가 없습니다. — 추정 불가"),
             tuple("s3", null, "지원하지 않는 S3 스토리지 클래스 'deep_archive' — 추정 불가"),
             tuple("db", null, "지원하지 않는 RDS 엔진 'Oracle' — 추정 불가"),
             tuple("shield", null, "가격표에 없음 — 추정 불가"),

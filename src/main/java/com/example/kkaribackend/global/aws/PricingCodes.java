@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 인프라 견적과 설계안 견적이 함께 쓰는 AWS Pricing Calculator 요금 코드.
+ * 인프라 견적과 설계안 견적이 함께 쓰는 AWS Price List 요금 코드.
  */
 public final class PricingCodes {
     public static final String AMAZON_EC2 = "AmazonEC2";
@@ -17,14 +17,15 @@ public final class PricingCodes {
         "ap-northeast-2", "APN2-",
         "ap-northeast-1", "APN1-");
     public static final String SEOUL = USAGE_TYPE_PREFIXES.get("ap-northeast-2");
-    public static final Map<String, EbsUsage> EBS_USAGES = Map.of(
-        "gp2", new EbsUsage("EBS:VolumeUsage.gp2", "CreateVolume-Gp2"),
-        "gp3", new EbsUsage("EBS:VolumeUsage.gp3", "CreateVolume-Gp3"),
-        "io1", new EbsUsage("EBS:VolumeUsage.piops", "CreateVolume-P-IOPS"),
-        "io2", new EbsUsage("EBS:VolumeUsage.io2", "CreateVolume-io2"),
-        "st1", new EbsUsage("EBS:VolumeUsage.st1", "CreateVolume-Throughput"),
-        "sc1", new EbsUsage("EBS:VolumeUsage.sc1", "CreateVolume-SC1"),
-        "standard", new EbsUsage("EBS:VolumeUsage", "CreateVolume"));
+    // EBS 볼륨 요금은 Price List 에서 operation 이 비어 있다
+    public static final Map<String, String> EBS_USAGE_TYPES = Map.of(
+        "gp2", "EBS:VolumeUsage.gp2",
+        "gp3", "EBS:VolumeUsage.gp3",
+        "io1", "EBS:VolumeUsage.piops",
+        "io2", "EBS:VolumeUsage.io2",
+        "st1", "EBS:VolumeUsage.st1",
+        "sc1", "EBS:VolumeUsage.sc1",
+        "standard", "EBS:VolumeUsage");
     // 키는 RDS API 의 엔진 이름이다
     public static final Map<String, String> RDS_OPERATIONS = Map.of(
         "mysql", "CreateDBInstance:0002",
@@ -38,9 +39,6 @@ public final class PricingCodes {
         "gateway", "LoadBalancing:Gateway");
 
     private PricingCodes() {
-    }
-
-    public record EbsUsage(String usageType, String operation) {
     }
 
     // RDS 인스턴스 usageType 은 대부분 xlarge 를 xl 로 줄여 쓰지만 db.t4g 처럼 줄이지 않는 패밀리도 있어 둘 다 보낸다

@@ -1,36 +1,38 @@
 package com.example.kkaribackend.global.aws;
 
+import com.example.kkaribackend.domain.pricing.domain.UnitPrice;
+import com.example.kkaribackend.domain.pricing.domain.UnitPrice.Tier;
+import com.example.kkaribackend.domain.pricing.domain.repository.UnitPriceRepository;
 import com.example.kkaribackend.global.aws.AwsPricingCalculator.LinePrice;
 import com.example.kkaribackend.global.aws.AwsPricingCalculator.UsageLine;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.mockito.stubbing.Answer;
+import org.springframework.dao.DataIntegrityViolationException;
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
-import software.amazon.awssdk.services.bcmpricingcalculator.BcmPricingCalculatorClient;
-import software.amazon.awssdk.services.bcmpricingcalculator.model.BatchCreateWorkloadEstimateUsageCode;
-import software.amazon.awssdk.services.bcmpricingcalculator.model.BatchCreateWorkloadEstimateUsageError;
-import software.amazon.awssdk.services.bcmpricingcalculator.model.BatchCreateWorkloadEstimateUsageItem;
-import software.amazon.awssdk.services.bcmpricingcalculator.model.BatchCreateWorkloadEstimateUsageRequest;
-import software.amazon.awssdk.services.bcmpricingcalculator.model.BatchCreateWorkloadEstimateUsageResponse;
-import software.amazon.awssdk.services.bcmpricingcalculator.model.CreateWorkloadEstimateRequest;
-import software.amazon.awssdk.services.bcmpricingcalculator.model.CreateWorkloadEstimateResponse;
-import software.amazon.awssdk.services.bcmpricingcalculator.model.DeleteWorkloadEstimateRequest;
-import software.amazon.awssdk.services.bcmpricingcalculator.model.WorkloadEstimateCostStatus;
-import software.amazon.awssdk.services.bcmpricingcalculator.model.WorkloadEstimateRateType;
-import software.amazon.awssdk.services.sts.StsClient;
-import software.amazon.awssdk.services.sts.model.GetCallerIdentityRequest;
-import software.amazon.awssdk.services.sts.model.GetCallerIdentityResponse;
+import software.amazon.awssdk.services.pricing.PricingClient;
+import software.amazon.awssdk.services.pricing.model.Filter;
+import software.amazon.awssdk.services.pricing.model.FilterType;
+import software.amazon.awssdk.services.pricing.model.GetProductsRequest;
+import software.amazon.awssdk.services.pricing.model.GetProductsResponse;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
-import java.util.function.Consumer;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.RETURNS_DEFAULTS;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -38,111 +40,157 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AwsPricingCalculatorTest {
-    private static final String ESTIMATE_ID = "00000000-0000-0000-0000-000000000001";
-    private static final String ACCOUNT_ID = "123456789012";
+    private static final UsageLine T3_MICRO = new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730);
 
-    private BcmPricingCalculatorClient client;
-    private StsClient sts;
+    // usageType -> Price List 가 돌려줄 상품 JSON. 없으면 상품 0개
+    private final Map<String, List<String>> products = new HashMap<>();
+    private PricingClient client;
+    private UnitPriceRepository repository;
     private AwsPricingCalculator calculator;
 
     @BeforeEach
     void setUp() {
-        client = mockWithConsumerOverloads(BcmPricingCalculatorClient.class);
-        sts = mockWithConsumerOverloads(StsClient.class);
-        when(sts.getCallerIdentity(any(GetCallerIdentityRequest.class)))
-            .thenReturn(GetCallerIdentityResponse.builder().account(ACCOUNT_ID).build());
-        when(client.createWorkloadEstimate(any(CreateWorkloadEstimateRequest.class)))
-            .thenReturn(CreateWorkloadEstimateResponse.builder().id(ESTIMATE_ID).build());
-        when(client.batchCreateWorkloadEstimateUsage(any(BatchCreateWorkloadEstimateUsageRequest.class)))
-            .thenAnswer(invocation -> validItems(invocation.getArgument(0), 9.49));
-        calculator = new AwsPricingCalculator(client, sts);
+        // 페이지네이터는 SDK 의 기본 메서드라 실제 구현이 getProducts 를 부르게 둔다
+        client = mock(PricingClient.class, CALLS_REAL_METHODS);
+        doAnswer(invocation -> {
+            GetProductsRequest request = invocation.getArgument(0);
+            return GetProductsResponse.builder()
+                .priceList(products.getOrDefault(filterValue(request, "usagetype"), List.of()))
+                .build();
+        }).when(client).getProducts(any(GetProductsRequest.class));
+        repository = mock(UnitPriceRepository.class);
+        when(repository.findByServiceCodeAndUsageTypeAndOperation(anyString(), anyString(), anyString()))
+            .thenReturn(Optional.empty());
+        when(repository.saveAndFlush(any(UnitPrice.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        calculator = new AwsPricingCalculator(client, repository);
     }
 
     @Test
-    void 줄을_25개씩_나눠_보내고_견적은_한_번_만들고_지운다() {
-        List<UsageLine> lines = IntStream.range(0, 26)
-            .mapToObj(i -> new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730))
-            .toList();
-
-        List<LinePrice> prices = calculator.price(lines);
-
-        assertThat(prices).hasSize(26).containsOnly(LinePrice.priced(new BigDecimal("9.49")));
-        ArgumentCaptor<BatchCreateWorkloadEstimateUsageRequest> batches =
-            ArgumentCaptor.forClass(BatchCreateWorkloadEstimateUsageRequest.class);
-        verify(client, times(2)).batchCreateWorkloadEstimateUsage(batches.capture());
-        assertThat(batches.getAllValues()).extracting(batch -> batch.usage().size()).containsExactly(25, 1);
-        assertThat(batches.getAllValues()).allSatisfy(batch -> {
-            assertThat(batch.workloadEstimateId()).isEqualTo(ESTIMATE_ID);
-            assertThat(batch.usage()).allSatisfy(entry -> {
-                assertThat(entry.usageAccountId()).isEqualTo(ACCOUNT_ID);
-                assertThat(entry.key()).matches("[a-zA-Z0-9]{1,10}");
-            });
-        });
-
-        ArgumentCaptor<CreateWorkloadEstimateRequest> create = ArgumentCaptor.forClass(CreateWorkloadEstimateRequest.class);
-        verify(client).createWorkloadEstimate(create.capture());
-        assertThat(create.getValue().rateType()).isEqualTo(WorkloadEstimateRateType.BEFORE_DISCOUNTS);
-        assertThat(create.getValue().name()).matches("kkari-[0-9a-f-]{36}");
-        verify(client).deleteWorkloadEstimate(DeleteWorkloadEstimateRequest.builder().identifier(ESTIMATE_ID).build());
-    }
-
-    @Test
-    void 계정_ID는_처음_한_번만_조회한다() {
-        List<UsageLine> lines = List.of(new UsageLine("AmazonEC2", "APN2-NatGateway-Hours", "NatGateway", 730));
-
-        calculator.price(lines);
-        calculator.price(lines);
-
-        verify(sts, times(1)).getCallerIdentity(any(GetCallerIdentityRequest.class));
-        verify(client, times(2)).createWorkloadEstimate(any(CreateWorkloadEstimateRequest.class));
-        verify(client, times(2)).deleteWorkloadEstimate(any(DeleteWorkloadEstimateRequest.class));
-    }
-
-    @Test
-    void 줄마다_비용이나_실패_이유를_돌려준다() {
-        when(client.batchCreateWorkloadEstimateUsage(any(BatchCreateWorkloadEstimateUsageRequest.class)))
-            .thenReturn(BatchCreateWorkloadEstimateUsageResponse.builder()
-                .items(
-                    BatchCreateWorkloadEstimateUsageItem.builder().key("k0").cost(16.425)
-                        .status(WorkloadEstimateCostStatus.VALID).build(),
-                    BatchCreateWorkloadEstimateUsageItem.builder().key("k1")
-                        .status(WorkloadEstimateCostStatus.STALE).build())
-                .errors(
-                    BatchCreateWorkloadEstimateUsageError.builder().key("k2")
-                        .errorCode(BatchCreateWorkloadEstimateUsageCode.BAD_REQUEST).build(),
-                    BatchCreateWorkloadEstimateUsageError.builder().key("k3")
-                        .errorCode(BatchCreateWorkloadEstimateUsageCode.INTERNAL_SERVER_ERROR).build())
-                .build());
+    void 저장된_단가가_있으면_API를_부르지_않고_계산한다() {
+        cached("AWSELB", "APN2-LoadBalancerUsage", "LoadBalancing:Application", "0.0225", Duration.ofDays(29));
+        cached("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances:0002", "0.0222", Duration.ofDays(1));
+        cached("AmazonRDS", "APN2-InstanceUsage:db.t3.micro", "CreateDBInstance:0002", "0.026", Duration.ZERO);
 
         List<LinePrice> prices = calculator.price(List.of(
             new UsageLine("AWSELB", "APN2-LoadBalancerUsage", "LoadBalancing:Application", 730),
-            new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730),
-            new UsageLine("AmazonEC2", "APN2-BoxUsage:nope", "RunInstances", 730),
-            new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.nano", "RunInstances", 730),
-            new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.small", "RunInstances", 730)));
+            new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances:0002", 730),
+            new UsageLine("AmazonRDS", "APN2-InstanceUsage:db.t3.micro", "CreateDBInstance:0002", 730)));
 
         assertThat(prices).containsExactly(
             LinePrice.priced(new BigDecimal("16.43")),
-            LinePrice.unpriced("가격 계산 결과가 유효하지 않습니다: STALE"),
-            LinePrice.unpriced("가격 계산 실패: BAD_REQUEST"),
-            LinePrice.callFailed("가격 계산 실패: INTERNAL_SERVER_ERROR"),
-            LinePrice.callFailed("가격 계산 응답에 결과가 없습니다."));
+            LinePrice.priced(new BigDecimal("16.21")),
+            LinePrice.priced(new BigDecimal("18.98")));
+        verify(client, never()).getProducts(any(GetProductsRequest.class));
+        verify(repository, never()).saveAndFlush(any());
     }
 
     @Test
-    void 이름_후보_중_가격이_나온_것을_쓴다() {
-        when(client.batchCreateWorkloadEstimateUsage(any(BatchCreateWorkloadEstimateUsageRequest.class)))
-            .thenReturn(BatchCreateWorkloadEstimateUsageResponse.builder()
-                .items(BatchCreateWorkloadEstimateUsageItem.builder().key("k1").cost(372.3)
-                    .status(WorkloadEstimateCostStatus.VALID).build())
-                .errors(
-                    BatchCreateWorkloadEstimateUsageError.builder().key("k0")
-                        .errorCode(BatchCreateWorkloadEstimateUsageCode.BAD_REQUEST).build(),
-                    BatchCreateWorkloadEstimateUsageError.builder().key("k2")
-                        .errorCode(BatchCreateWorkloadEstimateUsageCode.BAD_REQUEST).build(),
-                    BatchCreateWorkloadEstimateUsageError.builder().key("k3")
-                        .errorCode(BatchCreateWorkloadEstimateUsageCode.BAD_REQUEST).build())
-                .build());
+    void 저장된_단가가_없으면_Price_List에서_받아_저장한다() {
+        products.put("APN2-BoxUsage:t3.micro", List.of(product("Hrs", "0,Inf,0.0130000000")));
+
+        List<LinePrice> prices = calculator.price(List.of(T3_MICRO));
+
+        assertThat(prices).containsExactly(LinePrice.priced(new BigDecimal("9.49")));
+        GetProductsRequest request = sentRequest();
+        assertThat(request.serviceCode()).isEqualTo("AmazonEC2");
+        assertThat(request.filters()).extracting(Filter::type, Filter::field, Filter::value).containsExactly(
+            tuple(FilterType.TERM_MATCH, "usagetype", "APN2-BoxUsage:t3.micro"),
+            tuple(FilterType.TERM_MATCH, "operation", "RunInstances"));
+        UnitPrice saved = savedPrice();
+        assertThat(saved.getId()).isNull();
+        assertThat(saved).extracting(UnitPrice::getServiceCode, UnitPrice::getUsageType, UnitPrice::getOperation,
+            UnitPrice::getUnit).containsExactly("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", "Hrs");
+        assertThat(saved.getTiers()).containsExactly(new Tier(BigDecimal.ZERO, null, new BigDecimal("0.0130000000")));
+    }
+
+    @Test
+    void operation이_없는_요금은_usagetype으로만_찾고_구간_요금을_누적한다() {
+        products.put("APN2-TimedStorage-ByteHrs", List.of(product("GB-Mo",
+            "51200,512000,0.0240000000", "0,51200,0.0250000000", "512000,Inf,0.0230000000")));
+
+        List<LinePrice> prices = calculator.price(List.of(
+            new UsageLine("AmazonS3", "APN2-TimedStorage-ByteHrs", "", 600000),
+            new UsageLine("AmazonS3", "APN2-TimedStorage-ByteHrs", "", 50)));
+
+        assertThat(prices).containsExactly(
+            LinePrice.priced(new BigDecimal("14363.20")),
+            LinePrice.priced(new BigDecimal("1.25")));
+        assertThat(sentRequest().filters()).extracting(Filter::field).containsExactly("usagetype");
+        assertThat(savedPrice().getOperation()).isEmpty();
+    }
+
+    @Test
+    void 저장한_지_30일이_지난_단가는_다시_받아_갱신한다() {
+        UnitPrice stale = cached("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", "0.0100",
+            AwsPricingCalculator.PRICE_TTL.plusMinutes(1));
+        products.put("APN2-BoxUsage:t3.micro", List.of(product("Hrs", "0,Inf,0.0130000000")));
+
+        List<LinePrice> prices = calculator.price(List.of(T3_MICRO));
+
+        assertThat(prices).containsExactly(LinePrice.priced(new BigDecimal("9.49")));
+        UnitPrice saved = savedPrice();
+        assertThat(saved).isSameAs(stale);
+        assertThat(saved.getTiers()).extracting(Tier::usdPerUnit).containsExactly(new BigDecimal("0.0130000000"));
+        assertThat(saved.getFetchedAt()).isAfter(Instant.now().minusSeconds(60));
+    }
+
+    @Test
+    void 갱신_호출이_실패하면_이전_단가를_쓴다() {
+        cached("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", "0.0130",
+            AwsPricingCalculator.PRICE_TTL.plusDays(5));
+        doThrow(serviceException("ThrottlingException", 400)).when(client).getProducts(any(GetProductsRequest.class));
+
+        List<LinePrice> prices = calculator.price(List.of(T3_MICRO));
+
+        assertThat(prices).containsExactly(LinePrice.priced(new BigDecimal("9.49")));
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void 저장된_단가도_없는데_호출이_실패하면_CALL_FAILED다() {
+        doThrow(serviceException("ThrottlingException", 400)).when(client).getProducts(any(GetProductsRequest.class));
+
+        List<LinePrice> prices = calculator.price(List.of(T3_MICRO,
+            new UsageLine("AmazonEC2", "APN2-NatGateway-Hours", "NatGateway", 730)));
+
+        assertThat(prices).containsOnly(LinePrice.callFailed("단가 조회 실패: ThrottlingException (HTTP 400)"));
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void 상품이_없거나_여러_개면_가격_없음으로_저장한다() {
+        products.put("APN2-BoxUsage:twice.large", List.of(
+            product("Hrs", "0,Inf,0.1"), product("Hrs", "0,Inf,0.2")));
+
+        List<LinePrice> prices = calculator.price(List.of(
+            new UsageLine("AmazonEC2", "APN2-BoxUsage:nope.large", "RunInstances", 730),
+            new UsageLine("AmazonEC2", "APN2-BoxUsage:twice.large", "RunInstances", 730)));
+
+        assertThat(prices).containsOnly(LinePrice.unpriced("AWS Price List 에 온디맨드 단가가 없습니다."));
+        ArgumentCaptor<UnitPrice> saved = ArgumentCaptor.forClass(UnitPrice.class);
+        verify(repository, times(2)).saveAndFlush(saved.capture());
+        assertThat(saved.getAllValues()).allSatisfy(price -> assertThat(price.hasPrice()).isFalse());
+    }
+
+    @Test
+    void 가격_없음은_하루_동안만_믿고_다시_묻는다() {
+        cachedMissing("APN2-BoxUsage:new.large", Duration.ofHours(23));
+        cachedMissing("APN2-BoxUsage:newer.large", AwsPricingCalculator.MISSING_PRICE_TTL.plusMinutes(1));
+        products.put("APN2-BoxUsage:newer.large", List.of(product("Hrs", "0,Inf,0.1")));
+
+        List<LinePrice> prices = calculator.price(List.of(
+            new UsageLine("AmazonEC2", "APN2-BoxUsage:new.large", "RunInstances", 730),
+            new UsageLine("AmazonEC2", "APN2-BoxUsage:newer.large", "RunInstances", 730)));
+
+        assertThat(prices).containsExactly(
+            LinePrice.unpriced("AWS Price List 에 온디맨드 단가가 없습니다."),
+            LinePrice.priced(new BigDecimal("73.00")));
+        assertThat(sentRequest().filters().getFirst().value()).isEqualTo("APN2-BoxUsage:newer.large");
+    }
+
+    @Test
+    void 이름_후보_중_단가가_있는_첫_후보를_쓴다() {
+        products.put("APN2-InstanceUsage:db.r6g.xl", List.of(product("Hrs", "0,Inf,0.5100000000")));
 
         List<LinePrice> prices = calculator.price(List.of(
             new UsageLine("AmazonRDS", List.of("APN2-InstanceUsage:db.r6g.xlarge", "APN2-InstanceUsage:db.r6g.xl"),
@@ -152,66 +200,84 @@ class AwsPricingCalculatorTest {
 
         assertThat(prices).containsExactly(
             LinePrice.priced(new BigDecimal("372.30")),
-            LinePrice.unpriced("가격 계산 실패: BAD_REQUEST"));
+            LinePrice.unpriced("AWS Price List 에 온디맨드 단가가 없습니다."));
     }
 
     @Test
-    void 배치_호출이_실패하면_남은_배치는_보내지_않고_견적을_지운다() {
-        when(client.batchCreateWorkloadEstimateUsage(any(BatchCreateWorkloadEstimateUsageRequest.class)))
-            .thenThrow(serviceException("ThrottlingException", 400));
-        List<UsageLine> lines = IntStream.range(0, 26)
-            .mapToObj(i -> new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730))
-            .toList();
+    void 한_번의_계산에서_같은_단가는_한_번만_찾는다() {
+        products.put("APN2-BoxUsage:t3.micro", List.of(product("Hrs", "0,Inf,0.0130000000")));
 
-        List<LinePrice> prices = calculator.price(lines);
+        List<LinePrice> prices = calculator.price(IntStream.range(0, 26).mapToObj(i -> T3_MICRO).toList());
 
-        assertThat(prices).hasSize(26)
-            .containsOnly(LinePrice.callFailed("가격 계산 실패: ThrottlingException (HTTP 400)"));
-        verify(client).batchCreateWorkloadEstimateUsage(any(BatchCreateWorkloadEstimateUsageRequest.class));
-        verify(client).deleteWorkloadEstimate(any(DeleteWorkloadEstimateRequest.class));
+        assertThat(prices).hasSize(26).containsOnly(LinePrice.priced(new BigDecimal("9.49")));
+        verify(client, times(1)).getProducts(any(GetProductsRequest.class));
+        verify(repository, times(1)).findByServiceCodeAndUsageTypeAndOperation(anyString(), anyString(), anyString());
     }
 
     @Test
-    void 견적을_만들지_못하면_모든_줄이_실패하고_지울_것도_없다() {
-        when(client.createWorkloadEstimate(any(CreateWorkloadEstimateRequest.class)))
-            .thenThrow(serviceException("AccessDeniedException", 403));
+    void 저장이_실패해도_받아_온_단가로_계산한다() {
+        products.put("APN2-BoxUsage:t3.micro", List.of(product("Hrs", "0,Inf,0.0130000000")));
+        when(repository.saveAndFlush(any(UnitPrice.class))).thenThrow(new DataIntegrityViolationException("dup"));
 
-        List<LinePrice> prices = calculator.price(List.of(
-            new UsageLine("AmazonEC2", "APN2-NatGateway-Hours", "NatGateway", 730)));
-
-        assertThat(prices).containsExactly(
-            LinePrice.callFailed("가격 계산 준비 실패: AccessDeniedException (HTTP 403)"));
-        verify(client, never()).batchCreateWorkloadEstimateUsage(any(BatchCreateWorkloadEstimateUsageRequest.class));
-        verify(client, never()).deleteWorkloadEstimate(any(DeleteWorkloadEstimateRequest.class));
+        assertThat(calculator.price(List.of(T3_MICRO))).containsExactly(LinePrice.priced(new BigDecimal("9.49")));
     }
 
     @Test
-    void 견적_삭제가_실패해도_결과는_돌려준다() {
-        when(client.deleteWorkloadEstimate(any(DeleteWorkloadEstimateRequest.class)))
-            .thenThrow(serviceException("InternalServerException", 500));
-
-        List<LinePrice> prices = calculator.price(List.of(
-            new UsageLine("AmazonEC2", "APN2-NatGateway-Hours", "NatGateway", 730)));
-
-        assertThat(prices).containsExactly(LinePrice.priced(new BigDecimal("9.49")));
-    }
-
-    @Test
-    void 줄이_없으면_API를_부르지_않는다() {
+    void 줄이_없으면_아무것도_부르지_않는다() {
         assertThat(calculator.price(List.of())).isEmpty();
 
-        verify(client, never()).createWorkloadEstimate(any(CreateWorkloadEstimateRequest.class));
-        verify(sts, never()).getCallerIdentity(any(GetCallerIdentityRequest.class));
+        verify(client, never()).getProducts(any(GetProductsRequest.class));
+        verify(repository, never()).findByServiceCodeAndUsageTypeAndOperation(anyString(), anyString(), anyString());
     }
 
-    private static BatchCreateWorkloadEstimateUsageResponse validItems(BatchCreateWorkloadEstimateUsageRequest request,
-                                                                       double cost) {
-        return BatchCreateWorkloadEstimateUsageResponse.builder()
-            .items(request.usage().stream()
-                .map(entry -> BatchCreateWorkloadEstimateUsageItem.builder()
-                    .key(entry.key()).cost(cost).status(WorkloadEstimateCostStatus.VALID).build())
-                .toList())
-            .build();
+    private UnitPrice cached(String serviceCode, String usageType, String operation, String hourly, Duration age) {
+        return cached(serviceCode, usageType, operation,
+            List.of(new Tier(BigDecimal.ZERO, null, new BigDecimal(hourly))), age);
+    }
+
+    private void cachedMissing(String usageType, Duration age) {
+        cached("AmazonEC2", usageType, "RunInstances", List.of(), age);
+    }
+
+    private UnitPrice cached(String serviceCode, String usageType, String operation, List<Tier> tiers, Duration age) {
+        UnitPrice price = UnitPrice.builder().id(1L).serviceCode(serviceCode).usageType(usageType)
+            .operation(operation).unit("Hrs").tiers(tiers).fetchedAt(Instant.now().minus(age)).build();
+        when(repository.findByServiceCodeAndUsageTypeAndOperation(serviceCode, usageType, operation))
+            .thenReturn(Optional.of(price));
+        return price;
+    }
+
+    private GetProductsRequest sentRequest() {
+        ArgumentCaptor<GetProductsRequest> request = ArgumentCaptor.forClass(GetProductsRequest.class);
+        verify(client).getProducts(request.capture());
+        return request.getValue();
+    }
+
+    private UnitPrice savedPrice() {
+        ArgumentCaptor<UnitPrice> saved = ArgumentCaptor.forClass(UnitPrice.class);
+        verify(repository).saveAndFlush(saved.capture());
+        return saved.getValue();
+    }
+
+    private static String filterValue(GetProductsRequest request, String field) {
+        return request.filters().stream().filter(filter -> filter.field().equals(field))
+            .map(Filter::value).findFirst().orElseThrow();
+    }
+
+    // tiers: "beginRange,endRange,USD"
+    static String product(String unit, String... tiers) {
+        StringBuilder dimensions = new StringBuilder();
+        for (int i = 0; i < tiers.length; i++) {
+            String[] t = tiers[i].split(",");
+            dimensions.append(i == 0 ? "" : ",").append("""
+                "SKU.TERM.R%d": {"unit": "%s", "beginRange": "%s", "endRange": "%s", "pricePerUnit": {"USD": "%s"}}
+                """.formatted(i, unit, t[0], t[1], t[2]));
+        }
+        return """
+            {"product": {"sku": "SKU", "attributes": {}},
+             "terms": {"OnDemand": {"SKU.TERM": {"priceDimensions": {%s}}},
+                       "Reserved": {"SKU.RI": {"priceDimensions": {}}}}}
+            """.formatted(dimensions);
     }
 
     private static AwsServiceException serviceException(String code, int status) {
@@ -219,14 +285,5 @@ class AwsPricingCalculatorTest {
             .awsErrorDetails(AwsErrorDetails.builder().errorCode(code).build())
             .statusCode(status)
             .build();
-    }
-
-    // SDK 의 인자 없는·Consumer<Builder> 오버로드는 요청 객체 버전을 부르는 기본 메서드라 실제 구현을 탄다
-    private static <T> T mockWithConsumerOverloads(Class<T> type) {
-        Answer<Object> answer = invocation -> invocation.getMethod().isDefault()
-            && (invocation.getArguments().length == 0 || invocation.getArgument(0) instanceof Consumer<?>)
-            ? invocation.callRealMethod()
-            : RETURNS_DEFAULTS.answer(invocation);
-        return mock(type, answer);
     }
 }

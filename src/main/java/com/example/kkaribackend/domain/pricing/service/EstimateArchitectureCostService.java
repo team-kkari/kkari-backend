@@ -9,7 +9,6 @@ import com.example.kkaribackend.global.aws.AwsPricingCalculator.LinePrice;
 import com.example.kkaribackend.global.aws.AwsPricingCalculator.Status;
 import com.example.kkaribackend.global.aws.AwsPricingCalculator.UsageLine;
 import com.example.kkaribackend.global.aws.PricingCodes;
-import com.example.kkaribackend.global.aws.PricingCodes.EbsUsage;
 import com.example.kkaribackend.global.aws.exception.AwsErrorCode;
 import com.example.kkaribackend.global.aws.exception.AwsException;
 import lombok.RequiredArgsConstructor;
@@ -26,13 +25,13 @@ import java.util.Objects;
 import static com.example.kkaribackend.global.aws.PricingCodes.AMAZON_EC2;
 import static com.example.kkaribackend.global.aws.PricingCodes.AMAZON_RDS;
 import static com.example.kkaribackend.global.aws.PricingCodes.AWS_ELB;
-import static com.example.kkaribackend.global.aws.PricingCodes.EBS_USAGES;
+import static com.example.kkaribackend.global.aws.PricingCodes.EBS_USAGE_TYPES;
 import static com.example.kkaribackend.global.aws.PricingCodes.LB_OPERATIONS;
 import static com.example.kkaribackend.global.aws.PricingCodes.RDS_OPERATIONS;
 import static com.example.kkaribackend.global.aws.PricingCodes.SEOUL;
 
 /**
- * AI 서버 설계안의 구성요소(kind)를 서울 리전 AWS Pricing Calculator 사용량 줄로 바꿔 월 비용을 계산한다.
+ * AI 서버 설계안의 구성요소(kind)를 서울 리전 AWS Price List 사용량 줄로 바꿔 월 비용을 계산한다.
  */
 @RequiredArgsConstructor
 @Service
@@ -98,7 +97,7 @@ public class EstimateArchitectureCostService {
             .assumptions(List.of(
                 "서울 리전(ap-northeast-2) 온디맨드 기준",
                 "RI·Savings Plans·프리티어 미적용",
-                "AWS Pricing Calculator 기준 (구간 요금은 총량이 속한 구간 단가 적용)",
+                "AWS Price List 온디맨드 단가 (DB 캐시, 30일마다 갱신), 구간 요금 누적 계산",
                 "계산일 " + LocalDate.now(KST)))
             .build();
     }
@@ -157,8 +156,8 @@ public class EstimateArchitectureCostService {
             case "efs" -> List.of(seoul("AmazonEFS",
                 pick(EFS_CLASSES, orDefault(p.spec(), "standard"), "EFS 스토리지 클래스"), "", p.storageGb()));
             case "ebs" -> {
-                EbsUsage ebs = pick(EBS_USAGES, orDefault(p.spec(), "gp3"), "EBS 볼륨 타입");
-                yield List.of(seoul(AMAZON_EC2, ebs.usageType(), ebs.operation(), p.storageGb()));
+                String usageType = pick(EBS_USAGE_TYPES, orDefault(p.spec(), "gp3"), "EBS 볼륨 타입");
+                yield List.of(seoul(AMAZON_EC2, usageType, "", p.storageGb()));
             }
             case "lambda" -> {
                 String arch = pick(ARCHITECTURES, orDefault(p.spec(), "x86"), "아키텍처");
@@ -204,8 +203,7 @@ public class EstimateArchitectureCostService {
         if (p.storageGb() == 0) {
             return List.of(instance);
         }
-        EbsUsage gp3 = EBS_USAGES.get("gp3");
-        return List.of(instance, seoul(AMAZON_EC2, gp3.usageType(), gp3.operation(), p.storageGb() * p.count()));
+        return List.of(instance, seoul(AMAZON_EC2, EBS_USAGE_TYPES.get("gp3"), "", p.storageGb() * p.count()));
     }
 
     private static List<UsageLine> rds(Pricing p, double hours) {

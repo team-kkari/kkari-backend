@@ -44,7 +44,7 @@ class AwsCostEstimatorTest {
             List<UsageLine> lines = invocation.getArgument(0);
             sentLines.addAll(lines);
             return lines.stream().map(line -> line.primaryUsageType().contains("unknown")
-                ? LinePrice.unpriced("가격 계산 실패: BAD_REQUEST")
+                ? LinePrice.unpriced("AWS Price List 에 온디맨드 단가가 없습니다.")
                 : LinePrice.priced(PRICE)).toList();
         });
     }
@@ -65,7 +65,7 @@ class AwsCostEstimatorTest {
         Cost cost = estimator("ap-northeast-2").estimate(resources, missing);
 
         assertThat(cost.currency()).isEqualTo("USD");
-        assertThat(cost.basis()).isEqualTo("AWS_PRICING_CALCULATOR_BEFORE_DISCOUNTS");
+        assertThat(cost.basis()).isEqualTo("AWS_PRICE_LIST_ON_DEMAND");
         assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::primaryUsageType, UsageLine::operation,
             UsageLine::amount).containsExactly(
             tuple("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730.0),
@@ -81,7 +81,7 @@ class AwsCostEstimatorTest {
             .containsEntry("i-7", null);
         assertThat(missing).containsExactly(
             new Missing("COST EC2 i-5", "가격 계산을 지원하지 않는 플랫폼입니다: Windows with SQL Server Standard"),
-            new Missing("COST EC2 i-7", "가격 계산 실패: BAD_REQUEST"));
+            new Missing("COST EC2 i-7", "AWS Price List 에 온디맨드 단가가 없습니다."));
     }
 
     @Test
@@ -138,9 +138,9 @@ class AwsCostEstimatorTest {
 
         assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::primaryUsageType, UsageLine::operation,
             UsageLine::amount).containsExactly(
-            tuple("AmazonEC2", "APN2-EBS:VolumeUsage.gp3", "CreateVolume-Gp3", 100.0),
-            tuple("AmazonEC2", "APN2-EBS:VolumeUsage.piops", "CreateVolume-P-IOPS", 50.0),
-            tuple("AmazonEC2", "APN2-EBS:VolumeUsage", "CreateVolume", 8.0),
+            tuple("AmazonEC2", "APN2-EBS:VolumeUsage.gp3", "", 100.0),
+            tuple("AmazonEC2", "APN2-EBS:VolumeUsage.piops", "", 50.0),
+            tuple("AmazonEC2", "APN2-EBS:VolumeUsage", "", 8.0),
             tuple("AmazonS3", "APN2-TimedStorage-ByteHrs", "", 4.0),
             tuple("AWSELB", "APN2-LoadBalancerUsage", "LoadBalancing:Application", 730.0),
             tuple("AWSELB", "APN2-LoadBalancerUsage", "LoadBalancing:Network", 730.0),
