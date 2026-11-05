@@ -29,15 +29,16 @@ public class StartArchitectureService {
     private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
 
-    private static final int DEFAULT_COUNT = 5;
+    private static final int DEFAULT_ARCHITECTURE_COUNT = 5;
     // 생성은 길어야 몇 분이라, 이보다 오래 진행 중이면 서버 재시작 등으로 멈춘 작업으로 본다
     private static final Duration STALE_AFTER = Duration.ofHours(1);
+    private static final String STALE_FAILURE_REASON = "시간 초과로 중단되었습니다.";
 
     // 이미 대기·실행 중인 생성 작업이 있으면 새로 만들지 않고 그 작업을 돌려준다(요청한 개수가 달라도)
     @Transactional
     public StartArchitectureResponse execute(Long projectId, StartArchitectureRequest request) {
         Project project = projectFacade.getAssignedProject(projectId);
-        AnalysisJob analysis = analysisJobRepository
+        AnalysisJob latestAnalysis = analysisJobRepository
             .findFirstByProjectIdAndTypeAndStatusOrderByIdDesc(projectId, AnalysisJobType.ANALYSIS,
                 AnalysisStatus.SUCCEEDED)
             .orElseThrow(AnalysisNotCompletedException::new);
@@ -50,17 +51,23 @@ public class StartArchitectureService {
             if (job.getCreatedAt().isAfter(LocalDateTime.now().minus(STALE_AFTER))) {
                 return new StartArchitectureResponse(job.getId());
             }
-            job.fail("시간 초과로 중단되었습니다.");
+            job.fail(STALE_FAILURE_REASON);
         }
 
-        int count = request == null || request.count() == null ? DEFAULT_COUNT : request.count();
-        ArchitectureRequest input = ArchitectureInputFactory.create(
-            objectMapper.readValue(analysis.getResult(), InfraSnapshot.class),
-            project.getTerraform(), project.getRequirements(), count);
+        InfraSnapshot snapshot = objectMapper.readValue(latestAnalysis.getResult(), InfraSnapshot.class);
+        ArchitectureRequest input = ArchitectureInputFactory.create(snapshot, project.getTerraform(),
+            project.getRequirements(), requestedCount(request));
 
         AnalysisJob created = analysisJobRepository.save(AnalysisJob.builder()
             .project(project).type(AnalysisJobType.ARCHITECTURE).build());
         eventPublisher.publishEvent(new ArchitectureRequestedEvent(created.getId(), input));
         return new StartArchitectureResponse(created.getId());
+    }
+
+    private int requestedCount(StartArchitectureRequest request) {
+        if (request == null || request.count() == null) {
+            return DEFAULT_ARCHITECTURE_COUNT;
+        }
+        return request.count();
     }
 }

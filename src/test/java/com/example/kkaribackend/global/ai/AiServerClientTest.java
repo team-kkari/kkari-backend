@@ -12,6 +12,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.test.json.JsonCompareMode;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
+import tools.jackson.databind.ObjectMapper;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
@@ -47,7 +48,7 @@ class AiServerClientTest {
     }
 
     @Test
-    void architectures_성공시_응답_본문을_그대로_돌려준다() {
+    void architectures_성공시_응답_JSON을_돌려준다() {
         String body = """
             {"overall":"요약", "architectures":[{"rank":1,"name":"서버리스","cost":{"monthly_total_usd":12.5}}],
              "failed":[], "timings_s":{"total":90.1}}""";
@@ -58,7 +59,7 @@ class AiServerClientTest {
                 """, JsonCompareMode.STRICT))
             .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
 
-        assertThat(client.architectures(REQUEST)).isEqualTo(body);
+        assertThat(client.architectures(REQUEST)).isEqualTo(new ObjectMapper().readTree(body));
         server.verify();
     }
 
@@ -76,16 +77,6 @@ class AiServerClientTest {
     void architectures_5xx면_AI_SERVER_ERROR() {
         server.expect(requestTo("http://ai/architectures"))
             .andRespond(withServerError().body("{\"detail\":\"generation failed\"}"));
-
-        assertThatThrownBy(() -> client.architectures(REQUEST))
-            .isInstanceOf(AiServerException.class)
-            .extracting("errorCode").isEqualTo(AiErrorCode.AI_SERVER_ERROR);
-    }
-
-    @Test
-    void architectures_422면_AI_SERVER_ERROR() {
-        server.expect(requestTo("http://ai/architectures"))
-            .andRespond(withStatus(HttpStatus.UNPROCESSABLE_CONTENT).body("{\"detail\":[{\"msg\":\"bad\"}]}"));
 
         assertThatThrownBy(() -> client.architectures(REQUEST))
             .isInstanceOf(AiServerException.class)

@@ -6,11 +6,13 @@ import com.example.kkaribackend.global.ai.exception.AiErrorCode;
 import com.example.kkaribackend.global.ai.exception.AiServerException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
+import tools.jackson.databind.JsonNode;
 
 import java.net.SocketTimeoutException;
 import java.net.http.HttpConnectTimeoutException;
@@ -24,13 +26,13 @@ public class AiServerClient {
 
     private final RestClient aiRestClient;
 
-    // 응답 JSON 을 해석하지 않고 그대로 돌려준다. 호출마다 Claude 를 여러 번 부르므로 실패해도 다시 시도하지 않는다
-    public String architectures(ArchitectureRequest request) {
+    // 응답 모양은 해석하지 않고 JSON 인지만 확인한다. 호출마다 Claude 를 여러 번 부르므로 실패해도 다시 시도하지 않는다
+    public JsonNode architectures(ArchitectureRequest request) {
         return call("/architectures", () -> aiRestClient.post()
             .uri("/architectures")
             .body(request)
             .retrieve()
-            .body(String.class));
+            .body(JsonNode.class));
     }
 
     public HealthResponse health() {
@@ -45,8 +47,8 @@ public class AiServerClient {
             return request.get();
         } catch (RestClientResponseException e) {
             log.error("AI 서버 오류 응답: {} {} {}", path, e.getStatusCode(), e.getResponseBodyAsString());
-            // 429: AI 서버의 Claude 사용량 한도 초과
-            throw new AiServerException(e.getStatusCode().value() == 429
+            // AI 서버는 Claude 사용량 한도를 넘으면 429 를 준다
+            throw new AiServerException(e.getStatusCode().isSameCodeAs(HttpStatus.TOO_MANY_REQUESTS)
                 ? AiErrorCode.AI_SERVER_BUSY : AiErrorCode.AI_SERVER_ERROR);
         } catch (ResourceAccessException e) {
             if (isReadTimeout(e)) {

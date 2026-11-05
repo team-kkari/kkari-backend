@@ -3,8 +3,10 @@ package com.example.kkaribackend.domain.architecture.service;
 import com.example.kkaribackend.domain.project.domain.Requirements;
 import com.example.kkaribackend.global.ai.dto.ArchitectureRequest;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot;
+import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Cost;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.MetricStats;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Resources;
+import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Usage;
 import com.example.kkaribackend.global.terraform.dto.TerraformInfra;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
@@ -12,13 +14,11 @@ import lombok.NoArgsConstructor;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
-import java.util.function.Consumer;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * 분석 결과·Terraform·요구사항으로 AI 서버 입력을 만든다.
@@ -27,110 +27,170 @@ import java.util.stream.Stream;
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class ArchitectureInputFactory {
 
+    private static final String CPU_METRIC = "CPUUtilization";
+    private static final double BYTES_PER_GIB = 1L << 30;
+    private static final String PERSONAL_DATA_NOTICE = "개인정보 포함";
+
+    // 사용률·비용은 종류(kind)와 ID 로 찾는다
+    private record Resource(String kind, String id, String specs) {
+    }
+
     public static ArchitectureRequest create(InfraSnapshot snapshot, TerraformInfra terraform,
                                              Requirements requirements, int count) {
         return ArchitectureRequest.builder()
-            .infra(infra(snapshot, terraform))
-            .goal(goal(requirements))
-            .priorities(requirements == null || requirements.priorities() == null ? List.of()
-                : requirements.priorities().stream().map(p -> p.name().toLowerCase(Locale.ROOT)).toList())
+            .infra(describeInfra(snapshot, terraform))
+            .goal(describeGoal(requirements))
+            .priorities(priorityNames(requirements))
             .count(count)
             .build();
     }
 
-    private static String infra(InfraSnapshot snapshot, TerraformInfra terraform) {
+    private static String describeInfra(InfraSnapshot snapshot, TerraformInfra terraform) {
         List<String> lines = new ArrayList<>();
         lines.add(snapshot.region() == null ? "[AWS]" : "[AWS] 리전 " + snapshot.region());
-        resourceLines(snapshot.resources(), snapshot, lines::add);
+        for (Resource resource : listResources(snapshot.resources())) {
+            lines.add(describeWithUsageAndCost(resource, snapshot));
+        }
         if (terraform != null) {
             lines.add("[Terraform]");
-            resourceLines(terraform.resources(), null, lines::add);
+            for (Resource resource : listResources(terraform.resources())) {
+                lines.add(describe(resource));
+            }
         }
         return String.join("\n", lines);
     }
 
-    // snapshot 이 있으면 CPU 사용률·예상 비용을 덧붙인다
-    private static void resourceLines(Resources r, InfraSnapshot snapshot, Consumer<String> out) {
-        if (r == null) {
-            return;
+    private static List<Resource> listResources(Resources resources) {
+        List<Resource> list = new ArrayList<>();
+        if (resources == null) {
+            return list;
         }
-        each(r.ec2()).forEach(i -> out.accept(line(snapshot, "EC2", i.instanceId(),
-            i.instanceType(), i.platform(), i.state(), i.availabilityZone())));
-        each(r.ebs()).forEach(v -> out.accept(line(snapshot, "EBS", v.volumeId(),
-            v.volumeType(), v.sizeGiB() == null ? null : v.sizeGiB() + "GiB")));
-        each(r.rds()).forEach(d -> out.accept(line(snapshot, "RDS", d.dbInstanceId(),
-            d.instanceClass(), d.engine(), d.multiAz() == null ? null : d.multiAz() ? "Multi-AZ" : "Single-AZ",
-            d.allocatedStorageGiB() == null ? null : d.allocatedStorageGiB() + "GiB", d.status())));
-        each(r.s3()).forEach(b -> out.accept(line(snapshot, "S3", b.name(),
-            b.sizeBytes() == null ? null : String.format(Locale.ROOT, "%.2fGiB", b.sizeBytes() / (double) (1L << 30)))));
-        each(r.lambda()).forEach(f -> out.accept(line(snapshot, "LAMBDA", f.functionName(),
-            f.runtime(), f.memoryMb() == null ? null : f.memoryMb() + "MB")));
-        each(r.loadBalancers()).forEach(lb -> out.accept(line(snapshot, "ELB", lb.name(), lb.type())));
-        each(r.natGateways()).forEach(n -> out.accept(line(snapshot, "NAT", n.natGatewayId(), n.state())));
+        orEmpty(resources.ec2()).forEach(instance -> list.add(resource("EC2", instance.instanceId(),
+            instance.instanceType(), instance.platform(), instance.state(), instance.availabilityZone())));
+        orEmpty(resources.ebs()).forEach(volume -> list.add(resource("EBS", volume.volumeId(),
+            volume.volumeType(), withUnit(volume.sizeGiB(), "GiB"))));
+        orEmpty(resources.rds()).forEach(db -> list.add(resource("RDS", db.dbInstanceId(),
+            db.instanceClass(), db.engine(), availabilityMode(db.multiAz()),
+            withUnit(db.allocatedStorageGiB(), "GiB"), db.status())));
+        orEmpty(resources.s3()).forEach(bucket -> list.add(resource("S3", bucket.name(),
+            gibFromBytes(bucket.sizeBytes()))));
+        orEmpty(resources.lambda()).forEach(function -> list.add(resource("LAMBDA", function.functionName(),
+            function.runtime(), withUnit(function.memoryMb(), "MB"))));
+        orEmpty(resources.loadBalancers()).forEach(loadBalancer -> list.add(resource("ELB", loadBalancer.name(),
+            loadBalancer.type())));
+        orEmpty(resources.natGateways()).forEach(natGateway -> list.add(resource("NAT", natGateway.natGatewayId(),
+            natGateway.state())));
+        return list;
+    }
+
+    private static Resource resource(String kind, String id, String... specs) {
+        return new Resource(kind, id, joinNonBlank(", ", specs));
+    }
+
+    // 예: "EC2 i-1: t3.micro, Linux/UNIX"
+    private static String describe(Resource resource) {
+        String name = joinNonBlank(" ", resource.kind(), resource.id());
+        return resource.specs().isEmpty() ? name : name + ": " + resource.specs();
     }
 
     // 예: "EC2 i-1: t3.micro, Linux/UNIX / CPU 14일 평균 12.5%, p95 40.0% / 예상 월 7.59 USD"
-    private static String line(InfraSnapshot snapshot, String kind, String id, String... specs) {
-        StringBuilder line = new StringBuilder(join(" ", Stream.of(kind, id)));
-        String spec = join(", ", Stream.of(specs));
-        if (!spec.isEmpty()) {
-            line.append(": ").append(spec);
-        }
-        if (snapshot != null) {
-            Stream.of(cpu(snapshot, kind, id), cost(snapshot, kind, id))
-                .filter(Objects::nonNull)
-                .forEach(part -> line.append(" / ").append(part));
-        }
-        return line.toString();
+    private static String describeWithUsageAndCost(Resource resource, InfraSnapshot snapshot) {
+        return joinNonBlank(" / ", describe(resource), cpuUsage(snapshot.usage(), resource),
+            monthlyCost(snapshot.cost(), resource));
     }
 
-    private static String cpu(InfraSnapshot snapshot, String kind, String id) {
-        if (snapshot.usage() == null || snapshot.usage().byResource() == null) {
+    private static String cpuUsage(Usage usage, Resource resource) {
+        MetricStats cpu = findCpuStats(usage, resource);
+        if (cpu == null) {
             return null;
         }
-        Map<String, Map<String, MetricStats>> byId = snapshot.usage().byResource().get(kind);
-        Map<String, MetricStats> metrics = byId == null ? null : byId.get(id);
-        MetricStats stats = metrics == null ? null : metrics.get("CPUUtilization");
-        if (stats == null || (stats.average() == null && stats.p95() == null)) {
-            return null;
-        }
-        return "CPU " + snapshot.usage().days() + "일 " + join(", ", Stream.of(
-            stats.average() == null ? null : String.format(Locale.ROOT, "평균 %.1f%%", stats.average()),
-            stats.p95() == null ? null : String.format(Locale.ROOT, "p95 %.1f%%", stats.p95())));
+        String stats = joinNonBlank(", ",
+            cpu.average() == null ? null : format("평균 %.1f%%", cpu.average()),
+            cpu.p95() == null ? null : format("p95 %.1f%%", cpu.p95()));
+        return stats.isEmpty() ? null : "CPU " + usage.days() + "일 " + stats;
     }
 
-    private static String cost(InfraSnapshot snapshot, String kind, String id) {
-        if (snapshot.cost() == null || snapshot.cost().monthlyUsdByResource() == null) {
+    private static MetricStats findCpuStats(Usage usage, Resource resource) {
+        if (usage == null || usage.byResource() == null) {
             return null;
         }
-        Map<String, BigDecimal> byId = snapshot.cost().monthlyUsdByResource().get(kind);
-        BigDecimal usd = byId == null ? null : byId.get(id);
+        Map<String, Map<String, MetricStats>> metricsById = usage.byResource().get(resource.kind());
+        Map<String, MetricStats> metrics = metricsById == null ? null : metricsById.get(resource.id());
+        return metrics == null ? null : metrics.get(CPU_METRIC);
+    }
+
+    private static String monthlyCost(Cost cost, Resource resource) {
+        if (cost == null || cost.monthlyUsdByResource() == null) {
+            return null;
+        }
+        Map<String, BigDecimal> usdById = cost.monthlyUsdByResource().get(resource.kind());
+        BigDecimal usd = usdById == null ? null : usdById.get(resource.id());
         return usd == null ? null : "예상 월 " + usd.setScale(2, RoundingMode.HALF_UP).toPlainString() + " USD";
     }
 
-    // 요구사항 본문 뒤에 원하는 구조·예산·변경 금지 리소스를 한 줄씩 붙인다
-    private static String goal(Requirements requirements) {
+    private static String describeGoal(Requirements requirements) {
         if (requirements == null) {
             return "";
         }
-        BigDecimal budget = requirements.monthlyBudget();
-        List<String> frozen = requirements.frozenResources();
-        return join("\n", Stream.of(
+        return joinNonBlank("\n",
             requirements.content(),
-            blank(requirements.desiredArchitecture()) ? null : "원하는 구조: " + requirements.desiredArchitecture(),
-            budget == null ? null : "월 예산: " + join(" ", Stream.of(budget.toPlainString(), requirements.currency())),
-            frozen == null || frozen.isEmpty() ? null : "변경 금지 리소스: " + String.join(", ", frozen)));
+            isBlank(requirements.desiredArchitecture()) ? null : "원하는 구조: " + requirements.desiredArchitecture(),
+            monthlyBudget(requirements),
+            requirements.containsPersonalData() ? PERSONAL_DATA_NOTICE : null,
+            frozenResources(requirements.frozenResources()));
     }
 
-    private static String join(String delimiter, Stream<String> parts) {
-        return parts.filter(part -> !blank(part)).collect(Collectors.joining(delimiter));
+    private static String monthlyBudget(Requirements requirements) {
+        BigDecimal budget = requirements.monthlyBudget();
+        return budget == null ? null : "월 예산: " + joinNonBlank(" ", budget.toPlainString(), requirements.currency());
     }
 
-    private static boolean blank(String value) {
+    private static String frozenResources(List<String> frozenResources) {
+        if (frozenResources == null || frozenResources.isEmpty()) {
+            return null;
+        }
+        return "변경 금지 리소스: " + String.join(", ", frozenResources);
+    }
+
+    private static List<String> priorityNames(Requirements requirements) {
+        if (requirements == null || requirements.priorities() == null) {
+            return List.of();
+        }
+        return requirements.priorities().stream()
+            .map(priority -> priority.name().toLowerCase(Locale.ROOT))
+            .toList();
+    }
+
+    private static String withUnit(Integer value, String unit) {
+        return value == null ? null : value + unit;
+    }
+
+    private static String availabilityMode(Boolean multiAz) {
+        if (multiAz == null) {
+            return null;
+        }
+        return multiAz ? "Multi-AZ" : "Single-AZ";
+    }
+
+    private static String gibFromBytes(Long bytes) {
+        return bytes == null ? null : format("%.2fGiB", bytes / BYTES_PER_GIB);
+    }
+
+    private static String format(String pattern, Object... args) {
+        return String.format(Locale.ROOT, pattern, args);
+    }
+
+    private static String joinNonBlank(String delimiter, String... parts) {
+        return Arrays.stream(parts)
+            .filter(part -> !isBlank(part))
+            .collect(Collectors.joining(delimiter));
+    }
+
+    private static boolean isBlank(String value) {
         return value == null || value.isBlank();
     }
 
-    private static <T> List<T> each(List<T> list) {
+    private static <T> List<T> orEmpty(List<T> list) {
         return list == null ? List.of() : list;
     }
 }

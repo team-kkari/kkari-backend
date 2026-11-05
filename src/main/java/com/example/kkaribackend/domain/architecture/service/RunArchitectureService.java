@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.event.TransactionalEventListener;
+import tools.jackson.databind.JsonNode;
 
 /**
  * 추천 아키텍처 생성을 별도 스레드에서 실행한다. 인프라 분석과 같은 실행기를 쓴다.
@@ -21,6 +22,8 @@ import org.springframework.transaction.event.TransactionalEventListener;
 public class RunArchitectureService {
     private final AnalysisJobRepository analysisJobRepository;
     private final AiServerClient aiServerClient;
+
+    private static final String UNEXPECTED_FAILURE_REASON = "추천 아키텍처 생성 중 예상하지 못한 오류가 발생했습니다.";
 
     @Async
     @TransactionalEventListener
@@ -34,12 +37,13 @@ public class RunArchitectureService {
         analysisJobRepository.save(job);
 
         try {
-            job.succeed(aiServerClient.architectures(event.request()));
+            JsonNode architectures = aiServerClient.architectures(event.request());
+            job.succeed(architectures.toString());
         } catch (AiServerException e) {
             job.fail(e.getMessage());
         } catch (RuntimeException e) {
             log.error("추천 아키텍처 생성 실패: job={}", job.getId(), e);
-            job.fail("추천 아키텍처 생성 중 예상하지 못한 오류가 발생했습니다.");
+            job.fail(UNEXPECTED_FAILURE_REASON);
         }
         analysisJobRepository.save(job);
     }

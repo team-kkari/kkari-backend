@@ -75,7 +75,7 @@ class ArchitectureFlowTest {
     @Test
     void 생성을_시작하면_비동기로_실행되어_AI_응답을_그대로_조회한다() throws Exception {
         AnalysisJob analysis = saveSucceededAnalysis();
-        when(aiServerClient.architectures(any())).thenReturn(AI_RESPONSE);
+        when(aiServerClient.architectures(any())).thenReturn(objectMapper.readTree(AI_RESPONSE));
 
         String started = mockMvc.perform(post(url()).with(owner))
             .andExpect(status().isAccepted())

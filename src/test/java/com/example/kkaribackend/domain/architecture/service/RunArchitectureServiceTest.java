@@ -10,6 +10,7 @@ import com.example.kkaribackend.global.ai.exception.AiErrorCode;
 import com.example.kkaribackend.global.ai.exception.AiServerException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 import java.util.Optional;
@@ -37,7 +38,7 @@ class RunArchitectureServiceTest {
 
     @Test
     void AI_응답을_그대로_결과로_저장한다() {
-        when(aiServerClient.architectures(REQUEST)).thenReturn("{\"overall\":\"요약\"}");
+        when(aiServerClient.architectures(REQUEST)).thenReturn(new ObjectMapper().readTree("{\"overall\":\"요약\"}"));
 
         service.execute(new ArchitectureRequestedEvent(10L, REQUEST));
 
@@ -54,6 +55,16 @@ class RunArchitectureServiceTest {
 
         assertThat(job.getStatus()).isEqualTo(AnalysisStatus.FAILED);
         assertThat(job.getFailureReason()).isEqualTo(AiErrorCode.AI_SERVER_BUSY.getMessage());
+        assertThat(job.getResult()).isNull();
+    }
+
+    @Test
+    void AI_응답_본문이_비어_있으면_FAILED() {
+        when(aiServerClient.architectures(REQUEST)).thenReturn(null);
+
+        service.execute(new ArchitectureRequestedEvent(10L, REQUEST));
+
+        assertThat(job.getStatus()).isEqualTo(AnalysisStatus.FAILED);
         assertThat(job.getResult()).isNull();
     }
 

@@ -51,6 +51,7 @@ class ArchitectureInputFactoryTest {
             .desiredArchitecture("EKS")
             .monthlyBudget(new BigDecimal("1500.50"))
             .currency("USD")
+            .containsPersonalData(true)
             .frozenResources(List.of("prod-rds", "logs"))
             .build();
 
@@ -72,6 +73,7 @@ class ArchitectureInputFactoryTest {
             트래픽 급증 대비
             원하는 구조: EKS
             월 예산: 1500.50 USD
+            개인정보 포함
             변경 금지 리소스: prod-rds, logs""");
         assertThat(request.priorities()).containsExactly("security", "cost");
         assertThat(request.count()).isEqualTo(3);
