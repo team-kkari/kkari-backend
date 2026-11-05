@@ -1,6 +1,7 @@
 package com.example.kkaribackend.domain.analysis.service;
 
 import com.example.kkaribackend.domain.analysis.domain.AnalysisJob;
+import com.example.kkaribackend.domain.analysis.domain.AnalysisJobType;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
 import com.example.kkaribackend.domain.analysis.exception.AnalysisResultNotFoundException;
@@ -25,7 +26,8 @@ public class QueryDiscoveryService {
     public DiscoveryResponse execute(Long projectId) {
         Project project = projectFacade.getAssignedProject(projectId);
         AnalysisJob job = analysisJobRepository
-            .findFirstByProjectIdAndStatusOrderByIdDesc(projectId, AnalysisStatus.SUCCEEDED)
+            .findFirstByProjectIdAndTypeAndStatusOrderByIdDesc(projectId, AnalysisJobType.ANALYSIS,
+                AnalysisStatus.SUCCEEDED)
             .orElseThrow(AnalysisResultNotFoundException::new);
         return new DiscoveryResponse(job.getId(), job.getFinishedAt(),
             objectMapper.readValue(job.getResult(), InfraSnapshot.class), project.getTerraform());

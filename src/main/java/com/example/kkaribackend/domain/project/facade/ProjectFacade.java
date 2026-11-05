@@ -8,6 +8,8 @@ import com.example.kkaribackend.domain.user.facade.UserFacade;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
+
 @Component
 @RequiredArgsConstructor
 public class ProjectFacade {
@@ -17,9 +19,16 @@ public class ProjectFacade {
 
     // 현재 유저가 담당하는 프로젝트만 반환한다
     public Project getAssignedProject(Long projectId) {
-        Project project = projectRepository.findById(projectId)
-            .orElseThrow(ProjectNotFoundException::new);
+        return checkAssigned(projectRepository.findById(projectId));
+    }
 
+    // 트랜잭션이 끝날 때까지 프로젝트 행을 잠가서, 같은 프로젝트의 동시 요청이 차례로 처리되게 한다
+    public Project lockAssignedProject(Long projectId) {
+        return checkAssigned(projectRepository.findByIdForUpdate(projectId));
+    }
+
+    private Project checkAssigned(Optional<Project> found) {
+        Project project = found.orElseThrow(ProjectNotFoundException::new);
         if (!project.getUser().getId().equals(userFacade.getCurrentUserId())) {
             throw new NotAssignedProjectException();
         }

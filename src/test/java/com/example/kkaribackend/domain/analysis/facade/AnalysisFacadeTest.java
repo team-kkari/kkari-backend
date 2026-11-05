@@ -1,6 +1,7 @@
 package com.example.kkaribackend.domain.analysis.facade;
 
 import com.example.kkaribackend.domain.analysis.domain.AnalysisJob;
+import com.example.kkaribackend.domain.analysis.domain.AnalysisJobType;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
 import com.example.kkaribackend.domain.project.domain.Project;
@@ -35,7 +36,7 @@ class AnalysisFacadeTest {
         mapper = new ObjectMapper();
         facade = new AnalysisFacade(repository, mapper);
         project = Project.builder().id(1L).build();
-        when(repository.findFirstByProjectIdAndStatusOrderByIdDesc(1L, AnalysisStatus.SUCCEEDED))
+        when(repository.findFirstByProjectIdAndTypeAndStatusOrderByIdDesc(1L, AnalysisJobType.ANALYSIS, AnalysisStatus.SUCCEEDED))
             .thenReturn(Optional.empty());
     }
 
@@ -113,7 +114,7 @@ class AnalysisFacadeTest {
     private void store(InfraSnapshot snapshot) {
         AnalysisJob job = AnalysisJob.builder().project(project).build();
         job.succeed(mapper.writeValueAsString(snapshot));
-        when(repository.findFirstByProjectIdAndStatusOrderByIdDesc(1L, AnalysisStatus.SUCCEEDED))
+        when(repository.findFirstByProjectIdAndTypeAndStatusOrderByIdDesc(1L, AnalysisJobType.ANALYSIS, AnalysisStatus.SUCCEEDED))
             .thenReturn(Optional.of(job));
     }
 

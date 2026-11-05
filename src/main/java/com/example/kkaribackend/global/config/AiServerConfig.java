@@ -13,7 +13,8 @@ import java.time.Duration;
 public class AiServerConfig {
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(3);
-    private static final Duration READ_TIMEOUT = Duration.ofSeconds(60);
+    // 추천 아키텍처 생성이 1~2.5분 걸린다
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(300);
 
     @Bean
     public RestClient aiRestClient(@Value("${ai-server.url}") String baseUrl) {

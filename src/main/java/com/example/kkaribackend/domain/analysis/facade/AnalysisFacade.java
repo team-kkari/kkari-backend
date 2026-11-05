@@ -1,5 +1,6 @@
 package com.example.kkaribackend.domain.analysis.facade;
 
+import com.example.kkaribackend.domain.analysis.domain.AnalysisJobType;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
 import com.example.kkaribackend.domain.project.domain.Project;
@@ -30,7 +31,8 @@ public class AnalysisFacade {
     @Transactional(readOnly = true)
     public String getInfraContext(Project project) {
         StringBuilder text = new StringBuilder();
-        analysisJobRepository.findFirstByProjectIdAndStatusOrderByIdDesc(project.getId(), AnalysisStatus.SUCCEEDED)
+        analysisJobRepository.findFirstByProjectIdAndTypeAndStatusOrderByIdDesc(project.getId(),
+                AnalysisJobType.ANALYSIS, AnalysisStatus.SUCCEEDED)
             .ifPresent(job -> appendSnapshot(text, objectMapper.readValue(job.getResult(), InfraSnapshot.class)));
         if (project.getTerraform() != null) {
             var terraform = project.getTerraform();
