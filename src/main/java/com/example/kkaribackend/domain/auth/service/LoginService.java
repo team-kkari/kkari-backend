@@ -27,6 +27,6 @@ public class LoginService {
             throw new InvalidCredentialsException();
         }
 
-        return new TokenResponse(jwtProvider.generateAccessToken(user.getId(), user.getRole()));
+        return new TokenResponse(jwtProvider.generateAccessToken(user.getId(), user.getRole()), user.getRole());
     }
 }

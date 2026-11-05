@@ -3,6 +3,7 @@ package com.example.kkaribackend.domain.analysis.facade;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisJobType;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
+import com.example.kkaribackend.domain.project.domain.CustomerAnswersFormatter;
 import com.example.kkaribackend.domain.project.domain.Project;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Resources;
@@ -18,11 +19,12 @@ import java.util.TreeMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import static com.example.kkaribackend.global.util.TextTruncator.truncate;
+
 @Component
 @RequiredArgsConstructor
 public class AnalysisFacade {
     private static final int MAX_LENGTH = 4000;
-    private static final String OMITTED = "\n…(생략)";
     private static final List<String> KINDS = List.of("EC2", "EBS", "RDS", "S3", "LAMBDA", "ELB", "NAT");
 
     private final AnalysisJobRepository analysisJobRepository;
@@ -41,15 +43,12 @@ public class AnalysisFacade {
             appendResources(text, terraform.resources());
             text.append("누락 항목: ").append(size(terraform.missing())).append("개\n");
         }
-        if (text.length() > MAX_LENGTH) {
-            int end = MAX_LENGTH - OMITTED.length();
-            // 보조 평면 문자를 중간에서 자르지 않는다
-            if (Character.isHighSurrogate(text.charAt(end - 1))) {
-                end--;
-            }
-            return text.substring(0, end) + OMITTED;
+        String infra = truncate(text, MAX_LENGTH);
+        String answers = CustomerAnswersFormatter.describe(project.getAnswers());
+        if (answers.isEmpty()) {
+            return infra;
         }
-        return text.toString();
+        return infra.isEmpty() ? answers : infra + "\n" + answers;
     }
 
     private void appendSnapshot(StringBuilder text, InfraSnapshot snapshot) {

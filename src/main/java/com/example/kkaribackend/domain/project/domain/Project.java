@@ -10,6 +10,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.UUID;
 
 @Entity
@@ -28,6 +29,18 @@ public class Project {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
+
+    // 고객이 등록한 서비스에만 있다. 엔지니어가 직접 만든 프로젝트는 셋 다 null
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "customer_id")
+    private User customer;
+
+    @Column(length = 100)
+    private String serviceName;
+
+    // 질문 목록이 아직 정해지지 않아 JSON 한 컬럼에 둔다
+    @JdbcTypeCode(SqlTypes.JSON)
+    private Map<String, String> answers;
 
     // 고객사명
     @Column(length = 100, nullable = false)
@@ -86,6 +99,10 @@ public class Project {
 
     public void updateTerraform(TerraformInfra terraform) {
         this.terraform = terraform;
+    }
+
+    public boolean isRegisteredBy(Long customerId) {
+        return customer != null && customer.getId().equals(customerId);
     }
 
     public void markAnalyzed() {

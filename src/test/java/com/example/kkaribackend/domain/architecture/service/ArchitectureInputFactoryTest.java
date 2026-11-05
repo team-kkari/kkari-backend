@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -55,7 +56,7 @@ class ArchitectureInputFactoryTest {
             .frozenResources(List.of("prod-rds", "logs"))
             .build();
 
-        ArchitectureRequest request = ArchitectureInputFactory.create(snapshot, terraform, requirements, 3);
+        ArchitectureRequest request = ArchitectureInputFactory.create(snapshot, terraform, requirements, null, 3);
 
         assertThat(request.infra()).isEqualTo("""
             [AWS] 리전 ap-northeast-2
@@ -87,11 +88,30 @@ class ArchitectureInputFactoryTest {
                 .build())
             .build();
 
-        ArchitectureRequest request = ArchitectureInputFactory.create(snapshot, null, null, 5);
+        ArchitectureRequest request = ArchitectureInputFactory.create(snapshot, null, null, null, 5);
 
         assertThat(request.infra()).isEqualTo("[AWS]\nEC2 i-1: t3.micro");
         assertThat(request.goal()).isEmpty();
         assertThat(request.priorities()).isEmpty();
+    }
+
+    @Test
+    void 고객_답변은_요구사항_뒤에_질문_순으로_한_줄씩_붙인다() {
+        Requirements requirements = Requirements.builder().content("비용 절감").build();
+        Map<String, String> answers = new LinkedHashMap<>();
+        answers.put("트래픽", "평일 낮\n집중");
+        answers.put("DB", "MySQL");
+
+        ArchitectureRequest request = ArchitectureInputFactory.create(
+            InfraSnapshot.builder().build(), null, requirements, answers, 5);
+
+        assertThat(request.goal()).isEqualTo("""
+            비용 절감
+            [고객 답변]
+            DB: MySQL
+            트래픽: 평일 낮 집중""");
+        assertThat(ArchitectureInputFactory.create(InfraSnapshot.builder().build(), null, null, answers, 5).goal())
+            .startsWith("[고객 답변]");
     }
 
     @Test
@@ -104,7 +124,7 @@ class ArchitectureInputFactoryTest {
             .build();
 
         ArchitectureRequest request = ArchitectureInputFactory.create(
-            InfraSnapshot.builder().build(), null, requirements, 5);
+            InfraSnapshot.builder().build(), null, requirements, null, 5);
 
         assertThat(request.infra()).isEqualTo("[AWS]");
         assertThat(request.goal()).isEqualTo("비용 절감");
