@@ -49,12 +49,12 @@ class RunArchitectureServiceTest {
 
     @Test
     void AI_서버가_실패하면_우리_메시지로_FAILED() {
-        when(aiServerClient.architectures(REQUEST)).thenThrow(new AiServerException(AiErrorCode.AI_SERVER_BUSY));
+        when(aiServerClient.architectures(REQUEST)).thenThrow(new AiServerException(AiErrorCode.AI_SERVER_UNAVAILABLE));
 
         service.execute(new ArchitectureRequestedEvent(10L, REQUEST));
 
         assertThat(job.getStatus()).isEqualTo(AnalysisStatus.FAILED);
-        assertThat(job.getFailureReason()).isEqualTo(AiErrorCode.AI_SERVER_BUSY.getMessage());
+        assertThat(job.getFailureReason()).isEqualTo(AiErrorCode.AI_SERVER_UNAVAILABLE.getMessage());
         assertThat(job.getResult()).isNull();
     }
 

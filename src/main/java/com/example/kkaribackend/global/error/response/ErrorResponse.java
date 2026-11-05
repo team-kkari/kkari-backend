@@ -30,9 +30,4 @@ public record ErrorResponse (
             .build();
     }
 
-    public record FieldError(
-        String field,
-        String value,
-        String reason
-    ) { }
 }

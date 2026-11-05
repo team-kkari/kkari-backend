@@ -7,6 +7,7 @@ import com.example.kkaribackend.global.error.response.ValidErrorResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -42,7 +43,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     protected ResponseEntity<ValidErrorResponse> handleValidation(MethodArgumentNotValidException e) {
-        log.warn("{}: {}", e.getClass().getSimpleName(), e.getBindingResult().getFieldErrors());
+        log.warn("{}: {}", e.getClass().getSimpleName(),
+            e.getBindingResult().getFieldErrors().stream().map(FieldError::getField).toList());
         return ResponseEntity
             .status(GlobalErrorCode.INVALID_INPUT.getStatus())
             .body(ValidErrorResponse.of(GlobalErrorCode.INVALID_INPUT, e.getBindingResult()));
@@ -78,7 +80,7 @@ public class GlobalExceptionHandler {
 
 
     private ResponseEntity<ErrorResponse> respond(ErrorProperty errorCode, Exception e) {
-        log.warn("{}: {}", e.getClass().getSimpleName(), e.getMessage());
+        log.warn("{}: {} {}", e.getClass().getSimpleName(), errorCode.getStatus(), errorCode.getCode());
         return ResponseEntity
             .status(errorCode.getStatus())
             .body(ErrorResponse.of(errorCode));
