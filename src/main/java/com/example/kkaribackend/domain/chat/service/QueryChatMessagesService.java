@@ -29,7 +29,7 @@ public class QueryChatMessagesService {
             .reduce((previous, current) -> current).orElse(null);
         IntakeProfile profile = latest == null ? null : latest.getProfile();
         return new ChatHistoryResponseDto(messages.stream().map(ChatMessageResponseDto::from).toList(),
-            latest == null ? List.of() : latest.getMissingFields(),
+            IntakeProfileResponseDto.toProfileFieldNames(latest == null ? null : latest.getMissingFields()),
             latest == null ? List.of() : latest.getMissing(),
             latest == null ? null : latest.getReady(), IntakeProfileResponseDto.from(profile),
             RequirementsDraftResponseDto.from(profile));

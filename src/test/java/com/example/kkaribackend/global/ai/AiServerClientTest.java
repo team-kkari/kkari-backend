@@ -63,7 +63,7 @@ class AiServerClientTest {
         .name("serverless").diagram(json("{\"nodes\":[]}")).build();
     private static final String ERROR_BODY = "{\"code\":\"%s\",\"message\":\"%s\",\"retryable\":%s}";
 
-    private record Recorded(String path, String contentType, String body) {
+    private record Recorded(String path, String contentType, String body, String upgrade) {
     }
 
     // delay 뒤에 헤더를 보내고, chunks 를 하나씩 flush 한다. beforeChunk 는 각 조각의 순서를 받아 보내기 직전에 실행한다
@@ -186,6 +186,18 @@ class AiServerClientTest {
 
         assertThat(json(requests.getFirst().body())).isEqualTo(json("{\"history\":[],\"session_id\":\"c\"}"));
         assertThat(response.question()).isNull();
+    }
+
+    // h2c 업그레이드 요청이면 AI 서버(uvicorn httptools)가 본문을 버린다
+    @Test
+    void 요청은_HTTP_1_1로_보내고_Upgrade_헤더를_붙이지_않는다() {
+        replyJson(200, "{\"ok\":true}");
+        replyJson(200, "{\"reply\":\"질문\",\"ready\":false}");
+
+        client.isHealthy();
+        client.intake(INTAKE_REQUEST);
+
+        assertThat(requests).hasSize(2).allSatisfy(request -> assertThat(request.upgrade()).isNull());
     }
 
     @Test
@@ -664,7 +676,8 @@ class AiServerClientTest {
     private void handle(HttpExchange exchange) throws IOException {
         requests.add(new Recorded(exchange.getRequestURI().getPath(),
             exchange.getRequestHeaders().getFirst("Content-Type"),
-            new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
+            new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8),
+            exchange.getRequestHeaders().getFirst("Upgrade")));
         Reply reply = replies.poll();
         if (reply == null) {
             exchange.sendResponseHeaders(500, -1);

@@ -4,6 +4,8 @@ import com.example.kkaribackend.domain.analysis.domain.AnalysisJob;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisJobType;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
+import com.example.kkaribackend.domain.project.domain.Project;
+import com.example.kkaribackend.domain.project.facade.ProjectFacade;
 import com.example.kkaribackend.global.ai.AiServerClient;
 import com.example.kkaribackend.global.ai.dto.ArchitectureRequest;
 import com.example.kkaribackend.global.ai.exception.AiErrorCode;
@@ -17,6 +19,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -25,6 +28,7 @@ class RunArchitectureServiceTest {
         .infra("[AWS]").goal("").priorities(List.of()).count(5).build();
 
     private AiServerClient aiServerClient;
+    private ProjectFacade projectFacade;
     private RunArchitectureService service;
     private AnalysisJob job;
 
@@ -32,8 +36,9 @@ class RunArchitectureServiceTest {
     void setUp() {
         AnalysisJobRepository analysisJobRepository = mock(AnalysisJobRepository.class);
         aiServerClient = mock(AiServerClient.class);
-        service = new RunArchitectureService(analysisJobRepository, aiServerClient);
-        job = AnalysisJob.builder().id(10L).type(AnalysisJobType.ARCHITECTURE).build();
+        projectFacade = mock(ProjectFacade.class);
+        service = new RunArchitectureService(analysisJobRepository, aiServerClient, projectFacade);
+        job = AnalysisJob.builder().id(10L).project(Project.builder().id(3L).build()).type(AnalysisJobType.ARCHITECTURE).build();
         when(analysisJobRepository.findById(10L)).thenReturn(Optional.of(job));
     }
 
@@ -46,6 +51,7 @@ class RunArchitectureServiceTest {
         assertThat(job.getStatus()).isEqualTo(AnalysisStatus.SUCCEEDED);
         assertThat(job.getResult()).isEqualTo("{\"overall\":\"요약\"}");
         assertThat(job.getStep()).isNull();
+        verify(projectFacade).markRecommended(3L);
     }
 
     @Test
@@ -57,6 +63,7 @@ class RunArchitectureServiceTest {
         assertThat(job.getStatus()).isEqualTo(AnalysisStatus.FAILED);
         assertThat(job.getFailureReason()).isEqualTo(AiErrorCode.AI_SERVER_UNAVAILABLE.getMessage());
         assertThat(job.getResult()).isNull();
+        verifyNoInteractions(projectFacade);
     }
 
     @Test

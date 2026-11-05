@@ -80,6 +80,36 @@ class TerraformControllerTest {
 
         Project stored = projectRepository.findById(project.getId()).orElseThrow();
         assertThat(stored.getTerraform().resources().ec2()).extracting(Ec2Instance::instanceId).containsExactly("i-0abc");
+        assertThat(stored.getTerraform().fileName()).isEqualTo("terraform.tfstate");
+        assertThat(stored.getTerraform().size()).isEqualTo(file(TerraformStateParserTest.STATE).getSize());
+    }
+
+    @Test
+    void 프로젝트_상세에서_업로드_상태와_파일_메타데이터를_복원한다() throws Exception {
+        mockMvc.perform(get("/v1/projects/{id}", project.getId()).with(as(user)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.terraformUploaded").value(false))
+            .andExpect(jsonPath("$.terraform").isEmpty());
+        upload(TerraformStateParserTest.STATE).andExpect(status().isOk())
+            .andExpect(jsonPath("$.fileName").value("terraform.tfstate"))
+            .andExpect(jsonPath("$.size").value(file(TerraformStateParserTest.STATE).getSize()));
+        mockMvc.perform(get("/v1/projects/{id}", project.getId()).with(as(user)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.terraformUploaded").value(true))
+            .andExpect(jsonPath("$.terraform.fileName").value("terraform.tfstate"))
+            .andExpect(jsonPath("$.terraform.size").value(file(TerraformStateParserTest.STATE).getSize()))
+            .andExpect(content().string(not(containsString(TerraformStateParserTest.SECRET))));
+    }
+
+    @Test
+    void 이전_형식의_업로드는_업로드됨으로_복원하고_메타데이터만_null이다() throws Exception {
+        project.updateTerraform(objectMapper.readValue("""
+            {"resources":{"ec2":[]},"missing":[],"uploadedAt":"2026-11-05T00:00:00Z"}
+            """, com.example.kkaribackend.global.terraform.dto.TerraformInfra.class));
+        projectRepository.saveAndFlush(project);
+        mockMvc.perform(get("/v1/projects/{id}", project.getId()).with(as(user)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.terraformUploaded").value(true))
+            .andExpect(jsonPath("$.terraform.fileName").hasJsonPath())
+            .andExpect(jsonPath("$.terraform.fileName").isEmpty())
+            .andExpect(jsonPath("$.terraform.size").isEmpty());
     }
 
     @Test

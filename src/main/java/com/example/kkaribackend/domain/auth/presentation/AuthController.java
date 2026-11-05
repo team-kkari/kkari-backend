@@ -41,7 +41,8 @@ public class AuthController {
         return signUpService.execute(request, Role.CUSTOMER);
     }
 
-    @Operation(summary = "로그인", description = "엔지니어·고객 공통. role로 화면을 나눈다.")
+    @Operation(summary = "로그인", description = "엔지니어·고객 공통. role로 화면을 나눈다. 일반 계정은 이메일 대소문자를 구분하지 않는다. "
+        + "가입 당시 대소문자가 다른 기존 계정이 공존하면 원래 이메일 표기를 사용해야 한다.")
     @PostMapping("/login")
     public TokenResponse login(@Valid @RequestBody LoginRequest request) {
         return loginService.execute(request);

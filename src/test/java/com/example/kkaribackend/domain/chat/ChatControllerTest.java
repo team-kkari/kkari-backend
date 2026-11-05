@@ -344,6 +344,59 @@ class ChatControllerTest {
     }
 
     @Test
+    void 상담에서_바뀐_고객사명은_목록과_상세에_저장되고_과거_재전송으로_되돌아가지_않는다() throws Exception {
+        send("{\"content\":\"까리\",\"clientMessageId\":\"company-1\"}").andExpect(status().isOk());
+        when(aiServerClient.intake(any())).thenReturn(REPLY.toBuilder()
+            .profile(IntakeProfile.builder().companyName("  새 고객사  ").build()).build());
+        send("{\"content\":\"고객사명 수정\",\"clientMessageId\":\"company-2\"}").andExpect(status().isOk());
+        send("{\"content\":\"까리\",\"clientMessageId\":\"company-1\"}").andExpect(status().isOk());
+        mockMvc.perform(get("/v1/projects/" + project.getId()).with(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.companyName").value("새 고객사"));
+        mockMvc.perform(get("/v1/projects").with(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].companyName").value("새 고객사"));
+        verify(aiServerClient, times(2)).intake(any());
+    }
+
+    @Test
+    void AI_호출_중_저장한_요구사항은_고객사명_반영으로_덮어쓰지_않는다() throws Exception {
+        Requirements updated = Requirements.builder().content("AI 대기 중 사용자가 저장함").containsPersonalData(true).build();
+        when(aiServerClient.intake(any())).thenAnswer(invocation -> {
+            Project fresh = projectRepository.findById(project.getId()).orElseThrow();
+            fresh.updateRequirements(updated);
+            projectRepository.saveAndFlush(fresh);
+            return REPLY;
+        });
+        send("{}").andExpect(status().isOk());
+        Project saved = projectRepository.findById(project.getId()).orElseThrow();
+        assertThat(saved.getCompanyName()).isEqualTo("까리");
+        assertThat(saved.getRequirements()).isEqualTo(updated);
+    }
+
+    @Test
+    void 비어_있거나_너무_긴_고객사명은_기존_이름을_유지한다() throws Exception {
+        for (String name : new String[]{null, "", "   ", "가".repeat(101)}) {
+            when(aiServerClient.intake(any())).thenReturn(REPLY.toBuilder()
+                .profile(IntakeProfile.builder().companyName(name).build()).build());
+            send("{\"content\":\"고객 정보\"}").andExpect(status().isOk());
+            assertThat(projectRepository.findById(project.getId()).orElseThrow().getCompanyName()).isEqualTo("고객사");
+        }
+    }
+
+    @Test
+    void 누락_필드명은_POST와_GET에서만_camelCase로_바꾸고_DB는_원본을_보존한다() throws Exception {
+        List<String> raw = List.of("company_name", "monthly_budget", "contains_personal_data", "frozen_resources",
+            "change_tolerance", "workload", "new_future_field");
+        when(aiServerClient.intake(any())).thenReturn(REPLY.toBuilder().missingFields(raw).build());
+        send("{}").andExpect(status().isOk())
+            .andExpect(jsonPath("$.missingFields").value(org.hamcrest.Matchers.contains("companyName", "monthlyBudget", "containsPersonalData",
+                "frozenResources", "changeTolerance", "workload", "newFutureField")));
+        mockMvc.perform(get(url).with(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.missingFields").value(org.hamcrest.Matchers.contains("companyName", "monthlyBudget", "containsPersonalData",
+                "frozenResources", "changeTolerance", "workload", "newFutureField")));
+        assertThat(messages().getFirst().getMissingFields()).isEqualTo(raw);
+    }
+
+    @Test
     void 실패한_메시지_이후_다른_답변이_있으면_재전송을_거절한다() throws Exception {
         when(aiServerClient.intake(any())).thenThrow(new AiServerException(AiErrorCode.AI_SERVER_ERROR)).thenReturn(REPLY);
         String first = "{\"content\":\"첫 메시지\",\"clientMessageId\":\"A\"}";

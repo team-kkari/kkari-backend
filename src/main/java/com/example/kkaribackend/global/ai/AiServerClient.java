@@ -70,7 +70,11 @@ public class AiServerClient {
     }
 
     AiServerClient(String baseUrl, Timeouts timeouts, Duration retryDelay) {
-        HttpClient httpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+        // HTTP/2 기본값이면 Upgrade: h2c 가 붙고, AI 서버(uvicorn httptools)가 본문을 버려 422 가 난다
+        HttpClient httpClient = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .connectTimeout(CONNECT_TIMEOUT)
+            .build();
         this.timeouts = timeouts;
         this.healthClient = client(baseUrl, httpClient, timeouts.health());
         this.consultFilesClient = client(baseUrl, httpClient, timeouts.consultFiles());
