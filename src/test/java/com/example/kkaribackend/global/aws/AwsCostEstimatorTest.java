@@ -3,6 +3,7 @@ package com.example.kkaribackend.global.aws;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Cost;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Ec2Instance;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.LambdaFunction;
+import com.example.kkaribackend.global.aws.dto.InfraSnapshot.LoadBalancer;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Missing;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Resources;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.S3Bucket;
@@ -45,6 +46,22 @@ class AwsCostEstimatorTest {
             GetProductsResponse.builder().priceList(
                 "AmazonS3".equals(invocation.<GetProductsRequest>getArgument(0).serviceCode())
                     ? S3_PRODUCT : EC2_PRODUCT).build());
+    }
+
+    @Test
+    void ALB_월_비용은_일반_로드밸런서_시간_요금으로_계산한다() {
+        Resources resources = Resources.builder()
+            .loadBalancers(List.of(new LoadBalancer("web-alb", "application")))
+            .build();
+
+        estimator().estimate(resources, missing);
+
+        ArgumentCaptor<GetProductsRequest> captor = ArgumentCaptor.forClass(GetProductsRequest.class);
+        verify(pricingClient).getProducts(captor.capture());
+        assertThat(captor.getValue().serviceCode()).isEqualTo("AWSELB");
+        assertThat(captor.getValue().filters()).extracting(Filter::field, Filter::value).contains(
+            tuple("productFamily", "Load Balancer-Application"),
+            tuple("groupDescription", "LoadBalancer hourly usage by Application Load Balancer"));
     }
 
     @Test

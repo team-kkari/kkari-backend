@@ -48,10 +48,21 @@ public class AwsCostEstimator {
         "mariadb", "MariaDB",
         "aurora-mysql", "Aurora MySQL",
         "aurora-postgresql", "Aurora PostgreSQL");
-    private static final Map<String, String> LB_FAMILIES = Map.of(
-        "application", "Load Balancer-Application",
-        "network", "Load Balancer-Network",
-        "gateway", "Load Balancer-Gateway");
+    private static final Map<String, LoadBalancerProduct> LOAD_BALANCER_PRODUCTS = Map.of(
+        "application", LoadBalancerProduct.of("Application"),
+        "network", LoadBalancerProduct.of("Network"),
+        "gateway", LoadBalancerProduct.of("Gateway"));
+
+    // 같은 상품군에 Trust Store·Outposts 시간 요금도 있어서, 일반 로드밸런서 시간 요금만 설명으로 골라낸다
+    private record LoadBalancerProduct(String family, String hourlyUsageDescription) {
+        static LoadBalancerProduct of(String kind) {
+            return new LoadBalancerProduct("Load Balancer-" + kind, "LoadBalancer hourly usage by " + kind + " Load Balancer");
+        }
+
+        Map<String, String> filters() {
+            return Map.of("productFamily", family, "groupDescription", hourlyUsageDescription);
+        }
+    }
 
     private final String region;
     private final PricingClient pricingClient; // 키가 설정되지 않으면 null
@@ -129,10 +140,10 @@ public class AwsCostEstimator {
         if (resources.loadBalancers() != null) {
             Map<String, BigDecimal> costs = typeMap(monthly, "ELB");
             resources.loadBalancers().forEach(lb -> {
-                String family = LB_FAMILIES.get(lb.type());
-                costs.put(lb.name(), family == null
+                LoadBalancerProduct product = LOAD_BALANCER_PRODUCTS.get(lb.type());
+                costs.put(lb.name(), product == null
                     ? unpriced(missing, "ELB", lb.name(), "가격 조회를 지원하지 않는 타입입니다: " + lb.type())
-                    : perMonth(prices.find("ELB", lb.name(), "AWSELB", "Hrs", Map.of("productFamily", family))));
+                    : perMonth(prices.find("ELB", lb.name(), "AWSELB", "Hrs", product.filters())));
             });
         }
         if (resources.natGateways() != null) {
