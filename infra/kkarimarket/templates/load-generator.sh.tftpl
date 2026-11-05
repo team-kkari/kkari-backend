@@ -1,0 +1,82 @@
+#!/bin/bash
+# kkariMarket demo load generator. Creates a repeatable CPU pattern so that
+# CloudWatch has realistic data. Needs no network and no extra packages.
+# NOTE: this file is rendered by Terraform templatefile(); do not use the
+# dollar-brace or percent-brace syntax in bash code below.
+set -eu
+
+cat > /usr/local/bin/kkarimarket-load.sh <<'SCRIPT'
+#!/bin/bash
+# usage: kkarimarket-load.sh <web|batch|dev> <batch_peak: true|false>
+profile="$1"
+batch_peak="$2"
+
+# worker <duty_percent> <seconds>: busy-loop for duty% of every second on one core
+worker() {
+  local pct=$1 secs=$2 end busy idle
+  end=$((SECONDS + secs))
+  if [ "$pct" -ge 100 ]; then
+    busy=1; idle=0
+  elif [ "$pct" -le 0 ]; then
+    busy=0; idle=1
+  else
+    busy=$(printf '0.%02d' "$pct"); idle=$(printf '0.%02d' $((100 - pct)))
+  fi
+  while [ "$SECONDS" -lt "$end" ]; do
+    if [ "$busy" != "0" ]; then timeout "$busy" sh -c 'while :; do :; done'; fi
+    sleep "$idle"
+  done
+}
+
+# burn <workers> <duty_percent> <seconds>
+burn() {
+  local i
+  for i in $(seq 1 "$1"); do worker "$2" "$3" & done
+  wait
+}
+
+while true; do
+  # KST = UTC+9 (no timezone database needed)
+  read -r dow hour minute < <(date -u -d '+9 hours' +'%u %H %M')
+  hour=$((10#$hour)); minute=$((10#$minute))
+  case "$profile" in
+    web)
+      # steady shop traffic: about 17% of a 2 vCPU host (below the t3 baseline)
+      burn 1 35 60 ;;
+    batch)
+      if [ "$batch_peak" = "true" ] && [ "$hour" -eq 2 ] && [ "$minute" -lt 20 ]; then
+        # nightly settlement job: about 90% for 20 minutes
+        burn 2 90 60
+      else
+        # otherwise nearly idle: about 4%
+        burn 1 8 60
+      fi ;;
+    dev)
+      # weekdays 09:00-18:00 KST only, about 7%; idle otherwise
+      if [ "$dow" -le 5 ] && [ "$hour" -ge 9 ] && [ "$hour" -lt 18 ]; then
+        burn 1 15 60
+      else
+        sleep 60
+      fi ;;
+    *)
+      sleep 60 ;;
+  esac
+done
+SCRIPT
+chmod 0755 /usr/local/bin/kkarimarket-load.sh
+
+cat > /etc/systemd/system/kkarimarket-load.service <<'UNIT'
+[Unit]
+Description=kkarimarket demo load generator (${profile})
+
+[Service]
+ExecStart=/usr/local/bin/kkarimarket-load.sh ${profile} ${batch_peak}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now kkarimarket-load.service
