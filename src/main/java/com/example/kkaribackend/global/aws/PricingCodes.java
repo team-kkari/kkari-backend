@@ -1,6 +1,6 @@
 package com.example.kkaribackend.global.aws;
 
-import com.example.kkaribackend.global.aws.AwsPricingCalculator.UsageLine;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog.UsageLine;
 
 import java.util.List;
 import java.util.Map;

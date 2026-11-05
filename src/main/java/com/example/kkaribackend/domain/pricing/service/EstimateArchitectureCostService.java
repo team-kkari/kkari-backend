@@ -4,10 +4,10 @@ import com.example.kkaribackend.domain.pricing.presentation.dto.request.Architec
 import com.example.kkaribackend.domain.pricing.presentation.dto.request.ArchitectureNode.Pricing;
 import com.example.kkaribackend.domain.pricing.presentation.dto.request.EstimateCostRequest;
 import com.example.kkaribackend.domain.pricing.presentation.dto.response.CostReport;
-import com.example.kkaribackend.global.aws.AwsPricingCalculator;
-import com.example.kkaribackend.global.aws.AwsPricingCalculator.LinePrice;
-import com.example.kkaribackend.global.aws.AwsPricingCalculator.Status;
-import com.example.kkaribackend.global.aws.AwsPricingCalculator.UsageLine;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog.LinePrice;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog.Status;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog.UsageLine;
 import com.example.kkaribackend.global.aws.PricingCodes;
 import com.example.kkaribackend.global.aws.exception.AwsErrorCode;
 import com.example.kkaribackend.global.aws.exception.AwsException;
@@ -69,15 +69,15 @@ public class EstimateArchitectureCostService {
         "http", new ApiUsage("ApiGatewayHttpRequest", "ApiGatewayHttpApi"),
         "rest", new ApiUsage("ApiGatewayRequest", "ApiGatewayRequest"));
 
-    private final AwsPricingCalculator calculator;
+    private final AwsUnitPriceCatalog catalog;
 
     public CostReport execute(EstimateCostRequest request) {
-        if (!calculator.isConfigured()) {
+        if (!catalog.isConfigured()) {
             throw new AwsException(AwsErrorCode.AWS_CREDENTIALS_UNAVAILABLE);
         }
         List<NodePlan> plans = request.nodes().stream().map(EstimateArchitectureCostService::plan).toList();
         List<UsageLine> usageLines = plans.stream().flatMap(plan -> plan.lines().stream()).toList();
-        List<LinePrice> prices = calculator.price(usageLines);
+        List<LinePrice> prices = catalog.price(usageLines);
         // 일부만 계산된 결과로 설계안을 비교하면 틀린 순위가 나오므로 전체를 실패시킨다
         if (prices.stream().anyMatch(price -> price.status() == Status.CALL_FAILED)) {
             throw new AwsException(AwsErrorCode.AWS_REQUEST_FAILED);
@@ -282,7 +282,7 @@ public class EstimateArchitectureCostService {
                     return item(null, price.failure() + NOT_ESTIMABLE);
                 }
                 total = total.add(price.monthlyUsd());
-                terms.add(term(lines.get(i), price.monthlyUsd()));
+                terms.add(term(lines.get(i), price));
             }
             return item(total, String.join(" + ", terms));
         }
@@ -291,9 +291,9 @@ public class EstimateArchitectureCostService {
             return new CostReport.Item(node.id(), node.label(), node.pricing().kind(), monthlyUsd, formula);
         }
 
-        private static String term(UsageLine line, BigDecimal monthlyUsd) {
+        private static String term(UsageLine line, LinePrice price) {
             String amount = BigDecimal.valueOf(line.amount()).stripTrailingZeros().toPlainString();
-            return line.primaryUsageType() + " " + amount + " = " + monthlyUsd + " $";
+            return price.usageType() + " " + amount + " = " + price.monthlyUsd() + " $";
         }
     }
 

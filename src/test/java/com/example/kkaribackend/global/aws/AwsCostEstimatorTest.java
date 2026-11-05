@@ -1,7 +1,7 @@
 package com.example.kkaribackend.global.aws;
 
-import com.example.kkaribackend.global.aws.AwsPricingCalculator.LinePrice;
-import com.example.kkaribackend.global.aws.AwsPricingCalculator.UsageLine;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog.LinePrice;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog.UsageLine;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Cost;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.EbsVolume;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Ec2Instance;
@@ -33,19 +33,19 @@ class AwsCostEstimatorTest {
 
     private final List<Missing> missing = new ArrayList<>();
     private final List<UsageLine> sentLines = new ArrayList<>();
-    private AwsPricingCalculator calculator;
+    private AwsUnitPriceCatalog catalog;
 
     // usageType 에 "unknown" 이 들어간 줄은 가격을 찾지 못한 것으로 응답한다
     @BeforeEach
     void setUp() {
-        calculator = mock(AwsPricingCalculator.class);
-        when(calculator.isConfigured()).thenReturn(true);
-        when(calculator.price(anyList())).thenAnswer(invocation -> {
+        catalog = mock(AwsUnitPriceCatalog.class);
+        when(catalog.isConfigured()).thenReturn(true);
+        when(catalog.price(anyList())).thenAnswer(invocation -> {
             List<UsageLine> lines = invocation.getArgument(0);
             sentLines.addAll(lines);
-            return lines.stream().map(line -> line.primaryUsageType().contains("unknown")
+            return lines.stream().map(line -> line.usageTypes().getFirst().contains("unknown")
                 ? LinePrice.unpriced("AWS Price List 에 온디맨드 단가가 없습니다.")
-                : LinePrice.priced(PRICE)).toList();
+                : LinePrice.priced(line.usageTypes().getFirst(), PRICE)).toList();
         });
     }
 
@@ -66,8 +66,8 @@ class AwsCostEstimatorTest {
 
         assertThat(cost.currency()).isEqualTo("USD");
         assertThat(cost.basis()).isEqualTo("AWS_PRICE_LIST_ON_DEMAND");
-        assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::primaryUsageType, UsageLine::operation,
-            UsageLine::amount).containsExactly(
+        assertThat(sentLines).extracting(UsageLine::serviceCode, line -> line.usageTypes().getFirst(),
+            UsageLine::operation, UsageLine::amount).containsExactly(
             tuple("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730.0),
             tuple("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances:0002", 730.0),
             tuple("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances:0010", 730.0),
@@ -100,7 +100,8 @@ class AwsCostEstimatorTest {
 
         Cost cost = estimator("ap-northeast-2").estimate(resources, missing);
 
-        assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::primaryUsageType, UsageLine::operation)
+        assertThat(sentLines).extracting(UsageLine::serviceCode, line -> line.usageTypes().getFirst(),
+            UsageLine::operation)
             .containsExactly(
                 tuple("AmazonRDS", "APN2-InstanceUsage:db.t3.micro", "CreateDBInstance:0002"),
                 tuple("AmazonRDS", "APN2-Multi-AZUsage:db.m5.large", "CreateDBInstance:0014"),
@@ -136,8 +137,8 @@ class AwsCostEstimatorTest {
 
         Cost cost = estimator("ap-northeast-2").estimate(resources, missing);
 
-        assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::primaryUsageType, UsageLine::operation,
-            UsageLine::amount).containsExactly(
+        assertThat(sentLines).extracting(UsageLine::serviceCode, line -> line.usageTypes().getFirst(),
+            UsageLine::operation, UsageLine::amount).containsExactly(
             tuple("AmazonEC2", "APN2-EBS:VolumeUsage.gp3", "", 100.0),
             tuple("AmazonEC2", "APN2-EBS:VolumeUsage.piops", "", 50.0),
             tuple("AmazonEC2", "APN2-EBS:VolumeUsage", "", 8.0),
@@ -176,7 +177,7 @@ class AwsCostEstimatorTest {
 
         assertThat(cost.monthlyUsdByResource()).isNull();
         assertThat(missing).containsExactly(new Missing("COST", "가격 계산을 지원하지 않는 리전입니다: eu-west-1"));
-        verify(calculator, never()).price(anyList());
+        verify(catalog, never()).price(anyList());
     }
 
     @Test
@@ -185,7 +186,7 @@ class AwsCostEstimatorTest {
             .ec2(List.of(new Ec2Instance("i-1", "t3.micro", "Linux/UNIX", "running", "ap-northeast-2a")))
             .build();
 
-        when(calculator.isConfigured()).thenReturn(false);
+        when(catalog.isConfigured()).thenReturn(false);
 
         Cost cost = estimator("ap-northeast-2").estimate(resources, missing);
 
@@ -195,6 +196,6 @@ class AwsCostEstimatorTest {
     }
 
     private AwsCostEstimator estimator(String region) {
-        return new AwsCostEstimator(region, calculator);
+        return new AwsCostEstimator(region, catalog);
     }
 }

@@ -28,8 +28,6 @@ services:
   backend:
     image: ${BACKEND_IMAGE:?BACKEND_IMAGE 가 필요하다}
     restart: unless-stopped
-    # 진행 중인 분석을 기다리는 시간(spring.task.execution.shutdown, 30초)보다 길게 둔다
-    stop_grace_period: 40s
     depends_on:
       postgres:
         condition: service_healthy

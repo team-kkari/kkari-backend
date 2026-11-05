@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
@@ -16,6 +17,7 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.pricing.PricingClient;
 import software.amazon.awssdk.services.pricing.model.Filter;
 import software.amazon.awssdk.services.pricing.model.FilterType;
+import software.amazon.awssdk.services.pricing.model.GetProductsResponse;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -34,10 +36,9 @@ import java.util.Optional;
  */
 @Slf4j
 @Component
-public class AwsPricingCalculator {
+public class AwsUnitPriceCatalog {
     static final Duration PRICE_TTL = Duration.ofDays(30);
-    // 새로 나온 타입은 곧 Price List 에 올라오므로 없다는 결과는 짧게만 믿는다
-    static final Duration MISSING_PRICE_TTL = Duration.ofDays(1);
+    static final Duration MAX_PRICE_AGE = PRICE_TTL.multipliedBy(3);
     private static final String NO_PRICE = "AWS Price List 에 온디맨드 단가가 없습니다.";
     // 느린 응답이 요청 스레드와 분석 스레드를 오래 붙잡지 않게 한다
     private static final ClientOverrideConfiguration TIMEOUTS = ClientOverrideConfiguration.builder()
@@ -49,13 +50,13 @@ public class AwsPricingCalculator {
     private final UnitPriceRepository repository;
 
     @Autowired
-    AwsPricingCalculator(@Value("${aws.pricing.access-key}") String accessKey,
-                         @Value("${aws.pricing.secret-key}") String secretKey,
-                         UnitPriceRepository repository) {
+    AwsUnitPriceCatalog(@Value("${aws.pricing.access-key}") String accessKey,
+                        @Value("${aws.pricing.secret-key}") String secretKey,
+                        UnitPriceRepository repository) {
         this(newClient(accessKey, secretKey), repository);
     }
 
-    AwsPricingCalculator(PricingClient client, UnitPriceRepository repository) {
+    AwsUnitPriceCatalog(PricingClient client, UnitPriceRepository repository) {
         this.client = client;
         this.repository = repository;
     }
@@ -88,26 +89,22 @@ public class AwsPricingCalculator {
         public UsageLine(String serviceCode, String usageType, String operation, double amount) {
             this(serviceCode, List.of(usageType), operation, amount);
         }
-
-        public String primaryUsageType() {
-            return usageTypes.getFirst();
-        }
     }
 
     public enum Status { PRICED, UNPRICED, CALL_FAILED }
 
-    // CALL_FAILED 는 줄이 아니라 단가 조회가 실패한 것이라 다시 시도하면 값이 나올 수 있다
-    public record LinePrice(Status status, BigDecimal monthlyUsd, String failure) {
-        public static LinePrice priced(BigDecimal monthlyUsd) {
-            return new LinePrice(Status.PRICED, monthlyUsd, null);
+    // usageType 은 후보 중 실제로 가격이 나온 이름이다. CALL_FAILED 는 단가 조회가 실패한 것이라 다시 시도하면 값이 나올 수 있다
+    public record LinePrice(Status status, String usageType, BigDecimal monthlyUsd, String failure) {
+        public static LinePrice priced(String usageType, BigDecimal monthlyUsd) {
+            return new LinePrice(Status.PRICED, usageType, monthlyUsd, null);
         }
 
         public static LinePrice unpriced(String failure) {
-            return new LinePrice(Status.UNPRICED, null, failure);
+            return new LinePrice(Status.UNPRICED, null, null, failure);
         }
 
         public static LinePrice callFailed(String failure) {
-            return new LinePrice(Status.CALL_FAILED, null, failure);
+            return new LinePrice(Status.CALL_FAILED, null, null, failure);
         }
     }
 
@@ -120,21 +117,29 @@ public class AwsPricingCalculator {
             if (unitPrice == null) {
                 return LinePrice.callFailed(failure);
             }
-            return unitPrice.hasPrice() ? LinePrice.priced(unitPrice.cost(amount)) : LinePrice.unpriced(NO_PRICE);
+            return unitPrice.hasPrice()
+                ? LinePrice.priced(unitPrice.getUsageType(), unitPrice.cost(amount))
+                : LinePrice.unpriced(NO_PRICE);
         }
+    }
+
+    // price() 한 번에서만 쓴다. 같은 단가는 한 번만 찾고, Price List 호출이 한 번 실패하면 남은 줄은 부르지 않는다
+    private static final class Run {
+        private final Map<PriceKey, Lookup> lookups = new HashMap<>();
+        private String apiFailure;
     }
 
     // lines 와 같은 순서로 결과를 돌려준다. 실패해도 예외를 던지지 않고 모든 줄에 이유를 남긴다
     public List<LinePrice> price(List<UsageLine> lines) {
-        Map<PriceKey, Lookup> lookups = new HashMap<>();
-        return lines.stream().map(line -> price(line, lookups)).toList();
+        Run run = new Run();
+        return lines.stream().map(line -> price(line, run)).toList();
     }
 
-    private LinePrice price(UsageLine line, Map<PriceKey, Lookup> lookups) {
+    private LinePrice price(UsageLine line, Run run) {
         List<LinePrice> failures = new ArrayList<>();
         for (String usageType : line.usageTypes()) {
             PriceKey key = new PriceKey(line.serviceCode(), usageType, line.operation());
-            LinePrice price = lookups.computeIfAbsent(key, this::lookup).price(line.amount());
+            LinePrice price = run.lookups.computeIfAbsent(key, k -> lookup(k, run)).price(line.amount());
             if (price.status() == Status.PRICED) {
                 return price;
             }
@@ -144,7 +149,7 @@ public class AwsPricingCalculator {
             .orElse(failures.getFirst());
     }
 
-    private Lookup lookup(PriceKey key) {
+    private Lookup lookup(PriceKey key, Run run) {
         Optional<UnitPrice> cached;
         try {
             cached = repository.findByServiceCodeAndUsageTypeAndOperation(
@@ -153,29 +158,39 @@ public class AwsPricingCalculator {
             log.warn("저장된 단가 조회 실패: {}", key, e);
             return new Lookup(null, "단가 조회 실패: " + AwsFailures.reason(e));
         }
-        if (cached.isPresent() && !isStale(cached.get())) {
+        if (cached.isPresent() && isFresh(cached.get())) {
             return new Lookup(cached.get(), null);
         }
+        // 단가는 자주 바뀌지 않아, 새 단가를 받지 못했으면 실패로 끝내기보다 이전 단가를 쓴다
+        Optional<UnitPrice> fallback = cached.filter(AwsUnitPriceCatalog::isUsable);
 
-        UnitPrice fetched;
-        try {
-            fetched = fetch(key);
-        } catch (RuntimeException e) {
-            String failure = "단가 조회 실패: " + AwsFailures.reason(e);
-            // 단가는 자주 바뀌지 않아, 갱신하지 못했으면 실패로 끝내기보다 이전 단가를 쓴다
-            if (cached.isPresent()) {
-                log.warn("{} — 이전 단가를 씁니다: {}", failure, key);
-                return new Lookup(cached.get(), null);
+        UnitPrice fetched = null;
+        if (run.apiFailure == null) {
+            try {
+                fetched = fetch(key);
+            } catch (RuntimeException e) {
+                run.apiFailure = "단가 조회 실패: " + AwsFailures.reason(e);
+                log.warn("{}: {}", run.apiFailure, key);
             }
-            log.warn("{}: {}", failure, key);
-            return new Lookup(null, failure);
         }
-        return new Lookup(save(cached, fetched), null);
+        if (fetched != null && fetched.hasPrice()) {
+            return new Lookup(save(cached, fetched), null);
+        }
+        if (fallback.isPresent()) {
+            log.warn("새 단가를 받지 못해 이전 단가를 씁니다: {}", key);
+            return new Lookup(fallback.get(), null);
+        }
+        // 없다는 결과는 저장하지 않는다. AI 가 보낸 임의의 이름마다 행이 쌓이지 않게 한다
+        return fetched != null ? new Lookup(fetched, null) : new Lookup(null, run.apiFailure);
     }
 
-    private static boolean isStale(UnitPrice price) {
-        Duration ttl = price.hasPrice() ? PRICE_TTL : MISSING_PRICE_TTL;
-        return price.getFetchedAt().plus(ttl).isBefore(Instant.now());
+    private static boolean isFresh(UnitPrice price) {
+        return price.hasPrice() && price.getFetchedAt().plus(PRICE_TTL).isAfter(Instant.now());
+    }
+
+    // 갱신이 계속 실패해도 너무 오래된 단가로 조용히 계산하지 않는다
+    private static boolean isUsable(UnitPrice price) {
+        return price.hasPrice() && price.getFetchedAt().plus(MAX_PRICE_AGE).isAfter(Instant.now());
     }
 
     // 다른 요청이 같은 단가를 동시에 처음 저장하면 유니크 제약으로 하나만 남는다. 받아 온 단가는 같으므로 그대로 쓴다
@@ -186,8 +201,11 @@ public class AwsPricingCalculator {
                 return repository.saveAndFlush(cached.get());
             }
             return repository.saveAndFlush(fetched);
+        } catch (DataIntegrityViolationException e) {
+            log.info("다른 요청이 먼저 저장한 단가라 받아 온 값만 씁니다: {}", fetched.getUsageType());
+            return fetched;
         } catch (DataAccessException e) {
-            log.info("단가를 저장하지 못해 받아 온 값만 씁니다: {} {}", fetched.getUsageType(), e.getClass().getSimpleName());
+            log.warn("단가를 저장하지 못해 받아 온 값만 씁니다: {}", fetched.getUsageType(), e);
             return fetched;
         }
     }
@@ -199,17 +217,19 @@ public class AwsPricingCalculator {
         if (!key.operation().isBlank()) {
             filters.add(termMatch("operation", key.operation()));
         }
-        List<String> products = client.getProductsPaginator(r -> r.serviceCode(key.serviceCode()).filters(filters))
-            .priceList().stream().toList();
+        // 맞는 상품은 하나뿐이어야 하므로 둘까지만 받아 본다
+        GetProductsResponse response = client.getProducts(r -> r.serviceCode(key.serviceCode()).filters(filters)
+            .maxResults(2));
+        List<String> products = response.priceList();
         List<Tier> tiers = List.of();
         String unit = null;
-        if (products.size() == 1) {
-            List<JsonNode> dimensions = onDemandDimensions(products.getFirst());
-            tiers = dimensions.stream().map(AwsPricingCalculator::tier).toList();
-            unit = dimensions.isEmpty() ? null : dimensions.getFirst().path("unit").asString();
-        } else if (products.size() > 1) {
+        if (products.size() > 1 || response.nextToken() != null) {
             // 어느 상품이 맞는지 알 수 없으면 틀린 값을 내기보다 가격 없음으로 둔다
-            log.warn("단가가 하나로 정해지지 않아 쓰지 않습니다: {} (상품 {}개)", key, products.size());
+            log.warn("단가가 하나로 정해지지 않아 쓰지 않습니다: {}", key);
+        } else if (products.size() == 1) {
+            List<JsonNode> dimensions = onDemandDimensions(products.getFirst());
+            tiers = dimensions.stream().map(AwsUnitPriceCatalog::tier).toList();
+            unit = dimensions.isEmpty() ? null : dimensions.getFirst().path("unit").asString();
         }
         return UnitPrice.builder()
             .serviceCode(key.serviceCode())

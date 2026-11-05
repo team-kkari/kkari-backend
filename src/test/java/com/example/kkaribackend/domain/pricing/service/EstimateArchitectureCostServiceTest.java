@@ -4,9 +4,9 @@ import com.example.kkaribackend.domain.pricing.presentation.dto.request.Architec
 import com.example.kkaribackend.domain.pricing.presentation.dto.request.ArchitectureNode.Pricing;
 import com.example.kkaribackend.domain.pricing.presentation.dto.request.EstimateCostRequest;
 import com.example.kkaribackend.domain.pricing.presentation.dto.response.CostReport;
-import com.example.kkaribackend.global.aws.AwsPricingCalculator;
-import com.example.kkaribackend.global.aws.AwsPricingCalculator.LinePrice;
-import com.example.kkaribackend.global.aws.AwsPricingCalculator.UsageLine;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog.LinePrice;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog.UsageLine;
 import com.example.kkaribackend.global.aws.exception.AwsErrorCode;
 import com.example.kkaribackend.global.aws.exception.AwsException;
 import org.assertj.core.groups.Tuple;
@@ -35,20 +35,20 @@ class EstimateArchitectureCostServiceTest {
     private static final BigDecimal PRICE = new BigDecimal("1.25");
 
     private final List<UsageLine> sentLines = new ArrayList<>();
-    private AwsPricingCalculator calculator;
+    private AwsUnitPriceCatalog catalog;
     private EstimateArchitectureCostService service;
-    private Function<UsageLine, LinePrice> priceOf = line -> LinePrice.priced(PRICE);
+    private Function<UsageLine, LinePrice> priceOf = line -> LinePrice.priced(line.usageTypes().getFirst(), PRICE);
 
     @BeforeEach
     void setUp() {
-        calculator = mock(AwsPricingCalculator.class);
-        when(calculator.isConfigured()).thenReturn(true);
-        when(calculator.price(anyList())).thenAnswer(invocation -> {
+        catalog = mock(AwsUnitPriceCatalog.class);
+        when(catalog.isConfigured()).thenReturn(true);
+        when(catalog.price(anyList())).thenAnswer(invocation -> {
             List<UsageLine> lines = invocation.getArgument(0);
             sentLines.addAll(lines);
             return lines.stream().map(priceOf).toList();
         });
-        service = new EstimateArchitectureCostService(calculator);
+        service = new EstimateArchitectureCostService(catalog);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -56,8 +56,8 @@ class EstimateArchitectureCostServiceTest {
     void kind별로_서울_리전_사용량_줄을_보낸다(String kind, Pricing pricing, List<Tuple> expected) {
         CostReport report = estimate(node("n", pricing));
 
-        assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::primaryUsageType, UsageLine::operation,
-            UsageLine::amount).containsExactlyElementsOf(expected);
+        assertThat(sentLines).extracting(UsageLine::serviceCode, line -> line.usageTypes().getFirst(),
+            UsageLine::operation, UsageLine::amount).containsExactlyElementsOf(expected);
         assertThat(report.items().getFirst().monthlyUsd())
             .isEqualByComparingTo(PRICE.multiply(BigDecimal.valueOf(expected.size())));
     }
@@ -129,14 +129,17 @@ class EstimateArchitectureCostServiceTest {
     }
 
     @Test
-    void RDS_xlarge는_xl_이름도_후보로_보낸다() {
-        estimate(
+    void RDS_xlarge는_xl_이름도_후보로_보내고_식에는_가격이_나온_이름을_쓴다() {
+        priceOf = line -> LinePrice.priced(line.usageTypes().getLast(), PRICE);
+
+        CostReport report = estimate(
             node("db", pricing("rds").spec("db.r6g.xlarge").engine("MySQL").build()),
             node("aurora", pricing("aurora").spec("db.r6g.2xlarge").engine("Aurora PostgreSQL").build()));
 
         assertThat(sentLines).extracting(UsageLine::usageTypes).contains(
             List.of("APN2-InstanceUsage:db.r6g.xlarge", "APN2-InstanceUsage:db.r6g.xl"),
             List.of("APN2-InstanceUsage:db.r6g.2xlarge", "APN2-InstanceUsage:db.r6g.2xl"));
+        assertThat(report.items().getFirst().formula()).startsWith("APN2-InstanceUsage:db.r6g.xl 1460 = 1.25 $");
     }
 
     @Test
@@ -166,8 +169,9 @@ class EstimateArchitectureCostServiceTest {
 
     @Test
     void 추정할_수_없는_구성요소는_null이고_합계에서_빠진다() {
-        priceOf = line -> line.primaryUsageType().contains("nope")
-            ? LinePrice.unpriced("AWS Price List 에 온디맨드 단가가 없습니다.") : LinePrice.priced(PRICE);
+        priceOf = line -> line.usageTypes().getFirst().contains("nope")
+            ? LinePrice.unpriced("AWS Price List 에 온디맨드 단가가 없습니다.")
+            : LinePrice.priced(line.usageTypes().getFirst(), PRICE);
 
         CostReport report = estimate(
             node("users", pricing("free").build()),
@@ -190,7 +194,7 @@ class EstimateArchitectureCostServiceTest {
         assertThat(report.monthlyTotalUsd()).isEqualByComparingTo(PRICE);
         assertThat(report.unpriced()).containsExactly("bad-type 라벨", "s3 라벨", "db 라벨", "shield 라벨", "x 라벨");
         assertThat(report.assumptions()).hasSize(4).last().asString().startsWith("계산일 ");
-        assertThat(sentLines).extracting(UsageLine::primaryUsageType)
+        assertThat(sentLines).extracting(line -> line.usageTypes().getFirst())
             .containsExactly("APN2-BoxUsage:t3.micro", "APN2-BoxUsage:nope.large", "APN2-EBS:VolumeUsage.gp3");
     }
 
@@ -205,12 +209,12 @@ class EstimateArchitectureCostServiceTest {
 
     @Test
     void 가격_조회_키가_없으면_503으로_실패하고_API를_부르지_않는다() {
-        when(calculator.isConfigured()).thenReturn(false);
+        when(catalog.isConfigured()).thenReturn(false);
 
         assertThatThrownBy(() -> estimate(node("nat", pricing("nat_gateway").build())))
             .isInstanceOfSatisfying(AwsException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo(AwsErrorCode.AWS_CREDENTIALS_UNAVAILABLE));
-        verify(calculator, never()).price(anyList());
+        verify(catalog, never()).price(anyList());
     }
 
     private static Arguments kind(String kind, Function<Pricing.PricingBuilder, Pricing.PricingBuilder> spec,

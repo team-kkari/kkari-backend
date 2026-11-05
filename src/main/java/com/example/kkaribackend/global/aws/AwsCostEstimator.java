@@ -1,8 +1,8 @@
 package com.example.kkaribackend.global.aws;
 
-import com.example.kkaribackend.global.aws.AwsPricingCalculator.LinePrice;
-import com.example.kkaribackend.global.aws.AwsPricingCalculator.Status;
-import com.example.kkaribackend.global.aws.AwsPricingCalculator.UsageLine;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog.LinePrice;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog.Status;
+import com.example.kkaribackend.global.aws.AwsUnitPriceCatalog.UsageLine;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Cost;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.EbsVolume;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Ec2Instance;
@@ -46,15 +46,15 @@ public class AwsCostEstimator {
         "SUSE Linux", "RunInstances:000g");
 
     private final String region;
-    private final AwsPricingCalculator calculator;
+    private final AwsUnitPriceCatalog catalog;
 
-    AwsCostEstimator(@Value("${aws.region}") String region, AwsPricingCalculator calculator) {
+    AwsCostEstimator(@Value("${aws.region}") String region, AwsUnitPriceCatalog catalog) {
         this.region = region;
-        this.calculator = calculator;
+        this.catalog = catalog;
     }
 
     public Cost estimate(Resources resources, List<Missing> missing) {
-        if (!calculator.isConfigured()) {
+        if (!catalog.isConfigured()) {
             missing.add(new Missing("COST", "가격 조회용 AWS 자격증명이 설정되지 않았습니다."));
             return cost(null);
         }
@@ -76,7 +76,7 @@ public class AwsCostEstimator {
         }
         sheet.section("ELB", resources.loadBalancers(), sheet::addLoadBalancer);
         sheet.section("NAT", resources.natGateways(), sheet::addNatGateway);
-        sheet.fill(calculator.price(sheet.lines()));
+        sheet.fill(catalog.price(sheet.lines()));
         return cost(sheet.monthly);
     }
 

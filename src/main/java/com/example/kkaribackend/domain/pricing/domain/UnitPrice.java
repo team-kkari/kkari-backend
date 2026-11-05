@@ -12,7 +12,7 @@ import java.util.List;
 
 /**
  * AWS Price List 에서 받아 둔 사용량 한 종류의 온디맨드 단가.
- * AWS 에 단가가 없거나 하나로 정할 수 없었으면 tiers 가 비어 있다.
+ * AWS 에 단가가 없거나 하나로 정할 수 없었으면 tiers 가 비어 있고, 그런 값은 저장하지 않는다.
  */
 @Entity
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
