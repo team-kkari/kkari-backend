@@ -18,6 +18,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -30,7 +32,9 @@ public class GlobalExceptionHandler {
         ServletRequestBindingException.class,
         MissingServletRequestParameterException.class,
         MethodArgumentTypeMismatchException.class,
-        HandlerMethodValidationException.class
+        HandlerMethodValidationException.class,
+        MissingServletRequestPartException.class,
+        MultipartException.class
     })
     protected ResponseEntity<ErrorResponse> handleBadRequestException(Exception e) {
         return respond(GlobalErrorCode.INVALID_INPUT, e);

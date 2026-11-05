@@ -24,7 +24,6 @@ import java.io.UncheckedIOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -39,15 +38,11 @@ public class TerraformStateParser {
     private final ObjectMapper objectMapper;
 
     public TerraformInfra parse(MultipartFile file) {
-        String filename = file.getOriginalFilename();
-        if (filename == null || !filename.toLowerCase(Locale.ROOT).endsWith(".tfstate")) {
-            throw new InvalidTerraformStateException("확장자가 .tfstate 인 파일만 업로드할 수 있습니다.");
-        }
         JsonNode root = readJson(file);
         if (root == null || !root.isObject()) {
             throw new InvalidTerraformStateException("JSON 객체가 아닙니다.");
         }
-        if (root.path("version").asInt(0) != 4) {
+        if (!Integer.valueOf(4).equals(integer(root, "version"))) {
             throw new InvalidTerraformStateException("state 형식 버전 4만 지원합니다.");
         }
         if (!root.path("resources").isArray()) {
@@ -88,13 +83,28 @@ public class TerraformStateParser {
             String type = resource.path("type").asString("");
             for (JsonNode instance : resource.path("instances")) {
                 JsonNode a = instance.path("attributes");
+                if (!a.isObject()) {
+                    continue;
+                }
                 switch (type) {
                     // state 에는 platformDetails 가 없어 platform 은 null
-                    case "aws_instance" -> ec2.add(new Ec2Instance(text(a, "id"), text(a, "instance_type"), null,
-                        text(a, "instance_state"), text(a, "availability_zone")));
-                    case "aws_ebs_volume" -> ebs.add(new EbsVolume(text(a, "id"), text(a, "type"), integer(a, "size")));
+                    case "aws_instance" -> {
+                        ec2.add(new Ec2Instance(text(a, "id"), text(a, "instance_type"), null,
+                            text(a, "instance_state"), text(a, "availability_zone")));
+                        // 인스턴스에 붙은 볼륨도 AWS 수집처럼 EBS 로 본다
+                        for (String device : List.of("root_block_device", "ebs_block_device")) {
+                            for (JsonNode d : a.path(device)) {
+                                addEbs(ebs, new EbsVolume(text(d, "volume_id"), text(d, "volume_type"),
+                                    integer(d, "volume_size")));
+                            }
+                        }
+                    }
+                    case "aws_ebs_volume" -> addEbs(ebs, new EbsVolume(text(a, "id"), text(a, "type"), integer(a, "size")));
                     case "aws_db_instance" -> rds.add(new RdsInstance(text(a, "identifier"), text(a, "instance_class"),
                         text(a, "engine"), bool(a, "multi_az"), integer(a, "allocated_storage"), text(a, "status")));
+                    // Aurora 인스턴스. AWS 수집(DescribeDBInstances)에도 RDS 로 나온다
+                    case "aws_rds_cluster_instance" -> rds.add(new RdsInstance(text(a, "identifier"),
+                        text(a, "instance_class"), text(a, "engine"), null, null, null));
                     case "aws_s3_bucket" -> s3.add(new S3Bucket(text(a, "bucket"), null));
                     case "aws_lambda_function" -> lambda.add(new LambdaFunction(text(a, "function_name"),
                         text(a, "runtime"), integer(a, "memory_size")));
@@ -116,6 +126,13 @@ public class TerraformStateParser {
         return new Resources(ec2, ebs, rds, s3, lambda, loadBalancers, natGateways);
     }
 
+    // aws_ebs_volume 으로 만든 볼륨이 인스턴스의 ebs_block_device 에도 나올 수 있어 ID 가 같으면 한 번만 넣는다
+    private static void addEbs(List<EbsVolume> ebs, EbsVolume volume) {
+        if (volume.volumeId() == null || ebs.stream().noneMatch(v -> volume.volumeId().equals(v.volumeId()))) {
+            ebs.add(volume);
+        }
+    }
+
     private static String text(JsonNode attributes, String field) {
         JsonNode value = attributes.path(field);
         return value.isString() ? value.asString() : null;
@@ -123,7 +140,8 @@ public class TerraformStateParser {
 
     private static Integer integer(JsonNode attributes, String field) {
         JsonNode value = attributes.path(field);
-        return value.isIntegralNumber() ? value.asInt() : null;
+        // 범위를 넘는 값은 예외 대신 null
+        return value.isIntegralNumber() && value.canConvertToInt() ? value.intValue() : null;
     }
 
     private static Boolean bool(JsonNode attributes, String field) {

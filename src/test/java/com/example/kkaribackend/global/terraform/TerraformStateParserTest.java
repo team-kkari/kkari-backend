@@ -1,5 +1,6 @@
 package com.example.kkaribackend.global.terraform;
 
+import com.example.kkaribackend.global.aws.dto.InfraSnapshot.EbsVolume;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Ec2Instance;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Missing;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.RdsInstance;
@@ -40,7 +41,7 @@ public class TerraformStateParserTest {
 
     @Test
     void 지원하는_리소스만_필요한_속성으로_읽고_나머지는_missing에_남긴다() {
-        TerraformInfra terraform = parser.parse(file("terraform.tfstate", STATE));
+        TerraformInfra terraform = parser.parse(file(STATE));
 
         assertThat(terraform.resources().ec2()).containsExactly(
             new Ec2Instance("i-0abc", "t3.micro", null, "running", "ap-northeast-2a"));
@@ -54,32 +55,54 @@ public class TerraformStateParserTest {
 
     @Test
     void JSON이_아니면_거부한다() {
-        assertThatThrownBy(() -> parser.parse(file("terraform.tfstate", "not json {")))
+        assertThatThrownBy(() -> parser.parse(file("not json {")))
             .isInstanceOf(InvalidTerraformStateException.class)
             .hasMessageContaining("JSON 으로 읽을 수 없습니다");
     }
 
     @Test
     void 버전_4가_아니면_거부한다() {
-        assertThatThrownBy(() -> parser.parse(file("terraform.tfstate", "{\"version\":3,\"modules\":[]}")))
+        assertThatThrownBy(() -> parser.parse(file("{\"version\":3,\"modules\":[]}")))
             .isInstanceOf(InvalidTerraformStateException.class)
             .hasMessageContaining("버전 4");
     }
 
     @Test
-    void tfstate_확장자가_아니면_거부한다() {
-        assertThatThrownBy(() -> parser.parse(file("main.tf", STATE)))
-            .isInstanceOf(InvalidTerraformStateException.class)
-            .hasMessageContaining(".tfstate");
+    void 인스턴스_볼륨과_Aurora_인스턴스도_AWS_수집과_같은_모양으로_읽는다() {
+        TerraformInfra terraform = parser.parse(file("""
+            {"version": 4, "resources": [
+              {"mode": "managed", "type": "aws_instance", "name": "web", "instances": [{"attributes": {
+                "id": "i-1", "instance_type": "t3.micro", "instance_state": "running",
+                "root_block_device": [{"volume_id": "vol-root", "volume_type": "gp3", "volume_size": 8,
+                  "kms_key_id": "%1$s"}],
+                "ebs_block_device": [{"volume_id": "vol-data", "volume_type": "gp3", "volume_size": 100}]}}]},
+              {"mode": "managed", "type": "aws_ebs_volume", "name": "data", "instances": [
+                {"attributes": {"id": "vol-data", "type": "gp3", "size": 100}},
+                {"attributes": {"id": "vol-huge", "type": "gp3", "size": 99999999999}}]},
+              {"mode": "managed", "type": "aws_rds_cluster_instance", "name": "aurora", "instances": [{"attributes": {
+                "identifier": "aurora-1", "instance_class": "db.r6g.large", "engine": "aurora-mysql"}}]},
+              {"mode": "managed", "type": "aws_s3_bucket", "name": "broken", "instances": [{"attributes": null}, {}]}
+            ]}
+            """.formatted(SECRET)));
+
+        assertThat(terraform.resources().ebs()).containsExactly(
+            new EbsVolume("vol-root", "gp3", 8),
+            new EbsVolume("vol-data", "gp3", 100),
+            new EbsVolume("vol-huge", "gp3", null));
+        assertThat(terraform.resources().rds()).containsExactly(
+            new RdsInstance("aurora-1", "db.r6g.large", "aurora-mysql", null, null, null));
+        assertThat(terraform.resources().s3()).isEmpty();
+        assertThat(objectMapper.writeValueAsString(terraform)).doesNotContain(SECRET);
     }
 
     @Test
     void 빈_파일은_거부한다() {
-        assertThatThrownBy(() -> parser.parse(file("terraform.tfstate", "")))
+        assertThatThrownBy(() -> parser.parse(file("")))
             .isInstanceOf(InvalidTerraformStateException.class);
     }
 
-    private static MockMultipartFile file(String filename, String content) {
-        return new MockMultipartFile("file", filename, "application/json", content.getBytes(StandardCharsets.UTF_8));
+    private static MockMultipartFile file(String content) {
+        return new MockMultipartFile("file", "terraform.tfstate", "application/json",
+            content.getBytes(StandardCharsets.UTF_8));
     }
 }

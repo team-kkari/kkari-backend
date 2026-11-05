@@ -71,18 +71,6 @@ class TerraformControllerTest {
     }
 
     @Test
-    void 업로드하면_필요한_속성만_읽은_리소스_구조를_돌려준다() throws Exception {
-        upload(TerraformStateParserTest.STATE)
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.resources.ec2[0].instanceId").value("i-0abc"))
-            .andExpect(jsonPath("$.resources.rds[0].dbInstanceId").value("prod-db"))
-            .andExpect(jsonPath("$.missing[0].target").value("STRUCTURE TERRAFORM"))
-            .andExpect(jsonPath("$.uploadedAt").exists())
-            .andExpect(jsonPath("$.cost").doesNotExist())
-            .andExpect(content().string(not(containsString(TerraformStateParserTest.SECRET))));
-    }
-
-    @Test
     void 형식이_틀리면_400이고_이전_결과는_그대로다() throws Exception {
         upload(TerraformStateParserTest.STATE).andExpect(status().isOk());
 
@@ -105,7 +93,11 @@ class TerraformControllerTest {
 
     @Test
     void discovery는_AWS_결과와_terraform을_나란히_돌려준다() throws Exception {
-        upload(TerraformStateParserTest.STATE).andExpect(status().isOk());
+        upload(TerraformStateParserTest.STATE)
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.resources.ec2[0].instanceId").value("i-0abc"))
+            .andExpect(jsonPath("$.cost").doesNotExist())
+            .andExpect(content().string(not(containsString(TerraformStateParserTest.SECRET))));
         // AWS 분석 결과가 기본이라 없으면 terraform 이 있어도 404
         mockMvc.perform(get("/v1/projects/{id}/discovery", project.getId()).with(as(user)))
             .andExpect(status().isNotFound())
