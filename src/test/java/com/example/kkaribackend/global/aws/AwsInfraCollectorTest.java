@@ -41,7 +41,6 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.Bucket;
 import software.amazon.awssdk.services.s3.model.ListBucketsRequest;
 import software.amazon.awssdk.services.s3.model.ListBucketsResponse;
-import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -73,7 +72,7 @@ class AwsInfraCollectorTest {
         cloudWatch = client(CloudWatchClient.class);
         AwsInfraCollector.Clients clients = new AwsInfraCollector.Clients(ec2, rds, s3, lambda, elb, cloudWatch);
         // 가격 조회 미설정 상태
-        AwsCostEstimator costEstimator = new AwsCostEstimator("ap-northeast-2", null, new ObjectMapper());
+        AwsCostEstimator costEstimator = new AwsCostEstimator("ap-northeast-2", mock(AwsUnitPriceCatalog.class));
         collector = new AwsInfraCollector("ap-northeast-2", credentials -> clients, costEstimator);
 
         when(ec2.describeInstances(any(DescribeInstancesRequest.class))).thenReturn(DescribeInstancesResponse.builder()
