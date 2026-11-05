@@ -35,9 +35,13 @@ public record ValidErrorResponse (
         public static FieldErrorDetail from(FieldError fieldError) {
             return FieldErrorDetail.builder()
                 .field(fieldError.getField())
-                // 배포 후에는 보안때문에 삭제
-                .value(fieldError.getRejectedValue() != null ? fieldError.getRejectedValue().toString() : null)
+                .value(isPrivateField(fieldError) || fieldError.getRejectedValue() == null
+                    ? null : fieldError.getRejectedValue().toString())
                 .reason(fieldError.getDefaultMessage()).build();
+        }
+
+        private static boolean isPrivateField(FieldError error) {
+            return error.getField().equals("password") || error.getObjectName().equals("sendChatMessageRequestDto");
         }
     }
 }
