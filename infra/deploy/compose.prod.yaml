@@ -1,0 +1,54 @@
+# 운영(EC2 단일 서버)용 compose. 개발용 루트 compose.yaml과 다르다.
+# 값은 같은 폴더의 .env 에서 읽는다 (서버에만 두고 git에 올리지 않는다). 형식은 .env.example 참고.
+#
+# - postgres 는 호스트 포트를 공개하지 않는다 (외부 포트가 전부 열려 있는 서버이므로).
+# - backend 만 8080 으로 공개한다.
+# - AI 서버(kkari-AI)는 아직 컨테이너화 전이다. 준비되면 이 파일에 ai 서비스를 추가한다.
+
+name: kkari
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-kkari}
+      POSTGRES_USER: ${DB_USERNAME:-kkari}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD 가 필요하다}
+    volumes:
+      - kkari-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE 가 필요하다}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-kkari}
+      DB_USERNAME: ${DB_USERNAME:-kkari}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 가 필요하다}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS 가 필요하다}
+      AI_SERVER_URL: ${AI_SERVER_URL:-http://ai:8000}
+      AWS_REGION: ${AWS_REGION:-ap-northeast-1}
+      JPA_DDL_AUTO: ${JPA_DDL_AUTO:-update}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-true}
+    healthcheck:
+      # 8080 포트에 TCP 연결이 되면 정상으로 본다. JRE 이미지에 curl 이 있다는 보장이 없어서 bash 내장 /dev/tcp 를 쓴다.
+      # 백엔드에 actuator 가 없고 대부분 경로가 인증을 요구해서 HTTP 상태 코드로는 판별하지 않는다.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+volumes:
+  kkari-postgres:
