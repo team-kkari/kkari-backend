@@ -38,3 +38,12 @@ out/
 
 ### env ###
 .env
+
+### terraform / secrets ###
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+crash.log
+*.pem
