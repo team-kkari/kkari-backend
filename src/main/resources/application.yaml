@@ -13,6 +13,12 @@ spring:
     open-in-view: false
     show-sql: ${JPA_SHOW_SQL:false}
 
+  # @Async 실행기. 인프라 분석은 AWS 호출이 많아 동시에 2개까지 돌리고 나머지는 큐에서 기다린다
+  task:
+    execution:
+      pool:
+        core-size: 2
+
 springdoc:
   api-docs:
     enabled: ${SWAGGER_ENABLED:true}
@@ -35,6 +41,10 @@ cors:
 
 aws:
   region: ${AWS_REGION:ap-northeast-2}
+  # Price List API 전용 계정 키. 비어 있으면 예상 비용 없이 분석한다
+  pricing:
+    access-key: ${PRICING_AWS_ACCESS_KEY_ID:}
+    secret-key: ${PRICING_AWS_SECRET_ACCESS_KEY:}
 
 ai-server:
   url: ${AI_SERVER_URL:http://localhost:8000}
