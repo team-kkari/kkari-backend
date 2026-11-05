@@ -13,6 +13,7 @@ import java.util.Map;
  */
 @Builder
 public record InfraSnapshot(
+    String source, // AWS(연결해서 수집) 또는 TERRAFORM(state 파일 업로드)
     String region,
     Instant collectedAt,
     Resources resources,

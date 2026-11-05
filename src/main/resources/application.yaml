@@ -13,6 +13,12 @@ spring:
     open-in-view: false
     show-sql: ${JPA_SHOW_SQL:false}
 
+  # Terraform state 업로드 크기 제한. 넘으면 413(C007)
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
+
   # @Async 실행기. 인프라 분석은 AWS 호출이 많아 동시에 2개까지 돌리고 나머지는 큐에서 기다린다
   task:
     execution:

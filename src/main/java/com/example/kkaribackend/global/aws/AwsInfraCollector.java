@@ -108,6 +108,7 @@ public class AwsInfraCollector {
             Cost cost = costEstimator.estimate(resources, missing);
 
             return InfraSnapshot.builder()
+                .source("AWS")
                 .region(region)
                 .collectedAt(Instant.now())
                 .resources(resources)

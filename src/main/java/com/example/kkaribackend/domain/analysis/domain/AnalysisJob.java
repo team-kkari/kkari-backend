@@ -48,6 +48,13 @@ public class AnalysisJob {
 
     private LocalDateTime finishedAt;
 
+    // 파일 업로드처럼 요청 안에서 바로 끝나는 분석
+    public static AnalysisJob succeeded(Project project, String result) {
+        AnalysisJob job = AnalysisJob.builder().project(project).build();
+        job.succeed(result);
+        return job;
+    }
+
     public void start() {
         this.status = AnalysisStatus.RUNNING;
     }
