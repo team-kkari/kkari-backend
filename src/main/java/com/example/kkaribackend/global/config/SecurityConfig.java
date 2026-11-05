@@ -41,8 +41,7 @@ public class SecurityConfig {
                 .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
                 .requestMatchers("/v1/auth/**").permitAll()
                 .requestMatchers("/v1/customer/**").hasRole(Role.CUSTOMER.name())
-                .requestMatchers("/v1/projects/**", "/v1/jobs/**").hasRole(Role.MSP_ENGINEER.name())
-                .anyRequest().authenticated()
+                .anyRequest().hasRole(Role.MSP_ENGINEER.name())
             )
 
             .exceptionHandling(exception -> exception

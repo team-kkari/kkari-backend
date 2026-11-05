@@ -85,16 +85,35 @@ class AnalysisFacadeTest {
         registered.updateTerraform(new TerraformInfra(resources(), List.of(), Instant.EPOCH));
 
         assertThat(facade.getInfraContext(registered)).contains("[Terraform]")
-            .endsWith("[고객 답변]\nDB: MySQL\n트래픽: 평일 낮 집중\n");
+            .startsWith("[고객 답변]\nDB: MySQL\n트래픽: 평일 낮 집중\n");
+    }
+
+    @Test
+    void 인프라_요약이_길면_고객_답변은_남기고_인프라_요약을_자른다() {
+        Project registered = Project.builder().id(1L).answers(Map.of("DB", "MySQL")).build();
+        registered.updateTerraform(new TerraformInfra(Resources.builder().ec2(manyInstances()).build(), List.of(), Instant.EPOCH));
+
+        assertThat(facade.getInfraContext(registered)).hasSize(4000)
+            .startsWith("[고객 답변]\nDB: MySQL\n[Terraform]").endsWith("…(생략)");
+    }
+
+    @Test
+    void 고객_답변은_2000자에서_생략_표시로_끝난다() {
+        Map<String, String> answers = new HashMap<>();
+        for (int i = 0; i < 50; i++) {
+            answers.put("질문" + i, "답".repeat(2000));
+        }
+        Project registered = Project.builder().id(1L).answers(answers).build();
+        registered.updateTerraform(new TerraformInfra(resources(), List.of(), Instant.EPOCH));
+
+        String result = facade.getInfraContext(registered);
+        assertThat(result.indexOf("[Terraform]")).isEqualTo(2001);
+        assertThat(result.substring(0, 2000)).endsWith("…(생략)");
     }
 
     @Test
     void 긴_요약은_4000자_안에서_생략_표시로_끝난다() {
-        List<Ec2Instance> instances = new ArrayList<>();
-        for (int i = 0; i < 500; i++) {
-            instances.add(new Ec2Instance("i-" + i, "instance-type-" + i, "Linux/UNIX", "running", "ap-northeast-2a"));
-        }
-        project.updateTerraform(new TerraformInfra(Resources.builder().ec2(instances).build(), List.of(), Instant.EPOCH));
+        project.updateTerraform(new TerraformInfra(Resources.builder().ec2(manyInstances()).build(), List.of(), Instant.EPOCH));
         String result = facade.getInfraContext(project);
         assertThat(result).hasSize(4000).endsWith("…(생략)");
     }
@@ -125,6 +144,14 @@ class AnalysisFacadeTest {
         job.succeed(mapper.writeValueAsString(snapshot));
         when(repository.findFirstByProjectIdAndTypeAndStatusOrderByIdDesc(1L, AnalysisJobType.ANALYSIS, AnalysisStatus.SUCCEEDED))
             .thenReturn(Optional.of(job));
+    }
+
+    private List<Ec2Instance> manyInstances() {
+        List<Ec2Instance> instances = new ArrayList<>();
+        for (int i = 0; i < 500; i++) {
+            instances.add(new Ec2Instance("i-" + i, "instance-type-" + i, "Linux/UNIX", "running", "ap-northeast-2a"));
+        }
+        return instances;
     }
 
     private Resources resources() {

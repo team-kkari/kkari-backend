@@ -11,7 +11,6 @@ import java.util.Map;
 @Builder
 public record ProjectDetailResponse(
     Long projectId,
-    // 엔지니어가 직접 만든 프로젝트는 serviceName·answers 가 null
     String serviceName,
     String companyName,
     String contactName,

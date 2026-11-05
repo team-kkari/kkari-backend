@@ -1,6 +1,6 @@
 package com.example.kkaribackend.domain.architecture.service;
 
-import com.example.kkaribackend.domain.project.domain.CustomerAnswers;
+import com.example.kkaribackend.domain.project.domain.CustomerAnswersFormatter;
 import com.example.kkaribackend.domain.project.domain.Requirements;
 import com.example.kkaribackend.global.ai.dto.ArchitectureRequest;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot;
@@ -40,7 +40,7 @@ public final class ArchitectureInputFactory {
                                              Requirements requirements, Map<String, String> answers, int count) {
         return ArchitectureRequest.builder()
             .infra(describeInfra(snapshot, terraform))
-            .goal(joinNonBlank("\n", describeGoal(requirements), CustomerAnswers.describe(answers)))
+            .goal(joinNonBlank("\n", describeGoal(requirements), CustomerAnswersFormatter.describe(answers)))
             .priorities(priorityNames(requirements))
             .count(count)
             .build();

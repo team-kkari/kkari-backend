@@ -35,6 +35,6 @@ public class SignUpService {
                 .build()
         );
 
-        return new TokenResponse(jwtProvider.generateAccessToken(user.getId(), role), role);
+        return new TokenResponse(jwtProvider.generateAccessToken(user.getId(), user.getRole()), user.getRole());
     }
 }

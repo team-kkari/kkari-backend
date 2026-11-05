@@ -252,7 +252,7 @@ class CustomerPortalTest {
         for (String url : List.of("/v1/projects", "/v1/projects/" + serviceId,
             "/v1/projects/" + serviceId + "/aws-connection", "/v1/projects/" + serviceId + "/requirements",
             "/v1/projects/" + serviceId + "/chat/messages", "/v1/projects/" + serviceId + "/discovery",
-            "/v1/projects/" + serviceId + "/architectures", "/v1/jobs/1")) {
+            "/v1/projects/" + serviceId + "/architectures", "/v1/jobs/1", "/v1/unmapped")) {
             expectForbidden(mockMvc.perform(get(url).with(asCustomer)));
         }
         expectForbidden(mockMvc.perform(post("/v1/projects").with(asCustomer)

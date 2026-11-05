@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-@Tag(name = "Customer")
+@Tag(name = "Customer", description = "서비스는 고객이 등록한 프로젝트다. 엔지니어에게는 프로젝트로 보인다.")
 @RequiredArgsConstructor
 @RequestMapping("/v1/customer/services")
 @RestController

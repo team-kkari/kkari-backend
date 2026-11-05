@@ -5,7 +5,6 @@ import com.example.kkaribackend.domain.project.domain.repository.ProjectReposito
 import com.example.kkaribackend.domain.project.exception.NotAssignedProjectException;
 import com.example.kkaribackend.domain.project.exception.NotRegisteredProjectException;
 import com.example.kkaribackend.domain.project.exception.ProjectNotFoundException;
-import com.example.kkaribackend.domain.user.domain.User;
 import com.example.kkaribackend.domain.user.facade.UserFacade;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -33,8 +32,7 @@ public class ProjectFacade {
     // 현재 고객이 등록한 서비스만 반환한다
     public Project getRegisteredProject(Long projectId) {
         Project project = projectRepository.findById(projectId).orElseThrow(ProjectNotFoundException::new);
-        User customer = project.getCustomer();
-        if (customer == null || !customer.getId().equals(userFacade.getCurrentUserId())) {
+        if (!project.isRegisteredBy(userFacade.getCurrentUserId())) {
             throw new NotRegisteredProjectException();
         }
         return project;

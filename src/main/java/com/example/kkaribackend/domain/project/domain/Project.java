@@ -102,6 +102,10 @@ public class Project {
         this.terraform = terraform;
     }
 
+    public boolean isRegisteredBy(Long customerId) {
+        return customer != null && customer.getId().equals(customerId);
+    }
+
     public void markAnalyzed() {
         advanceTo(ProjectStage.ANALYZED);
     }
