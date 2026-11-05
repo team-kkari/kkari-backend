@@ -11,6 +11,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DataIntegrityViolationException;
+import com.example.kkaribackend.domain.user.domain.EmailNormalizer;
 
 @RequiredArgsConstructor
 @Service
@@ -21,19 +23,25 @@ public class SignUpService {
 
     @Transactional
     public TokenResponse execute(SignUpRequest request, Role role) {
-        if (userRepository.existsByEmail(request.email())) {
+        String email = EmailNormalizer.normalize(request.email());
+        if (userRepository.existsByEmailIgnoreCase(email)) {
             throw new UserAlreadyExistsException();
         }
 
-        User user = userRepository.save(
-            User.builder()
-                .email(request.email())
-                .password(passwordEncoder.encode(request.password()))
-                .name(request.name())
-                .companyName(request.companyName())
-                .role(role)
-                .build()
-        );
+        User user;
+        try {
+            user = userRepository.saveAndFlush(
+                User.builder()
+                    .email(email)
+                    .password(passwordEncoder.encode(request.password()))
+                    .name(request.name())
+                    .companyName(request.companyName())
+                    .role(role)
+                    .build()
+            );
+        } catch (DataIntegrityViolationException exception) {
+            throw new UserAlreadyExistsException();
+        }
 
         return new TokenResponse(jwtProvider.generateAccessToken(user.getId(), user.getRole()), user.getRole());
     }
