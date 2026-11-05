@@ -44,7 +44,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
+import java.util.function.IntFunction;
 
 /**
  * AI 서버(kkari-AI) 호출을 모은다. 실패는 모두 AiServerException 으로 바꾸고,
@@ -84,7 +84,15 @@ public class AiServerClient {
     private static RestClient client(String baseUrl, HttpClient httpClient, Duration readTimeout) {
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(readTimeout);
-        return RestClient.builder().baseUrl(baseUrl).requestFactory(requestFactory).build();
+        return RestClient.builder().baseUrl(baseUrl).requestFactory(requestFactory)
+            .requestInterceptor(new AiCallLogInterceptor()).build();
+    }
+
+    // 시도 번호는 요청 속성으로 넘겨 AI_CALL 로그에 남긴다
+    private static RestClient.RequestBodySpec post(RestClient client, String path, int attempt) {
+        return client.post().uri(path)
+            .attribute(AiCallLogInterceptor.ATTEMPT, attempt)
+            .attribute(AiCallLogInterceptor.MAX_ATTEMPTS, MAX_ATTEMPTS);
     }
 
     // 재시도하지 않는다. 상태 확인은 한 번에 빨리 끝나야 한다
@@ -101,8 +109,11 @@ public class AiServerClient {
     public JsonNode consultFiles(List<MultipartFile> files) {
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         files.forEach(file -> body.add("files", file.getResource()));
-        JsonNode response = call("/consult/files", () -> consultFilesClient.post()
-            .uri("/consult/files")
+        // 파일 내용 대신 이름과 크기만 로그에 남긴다
+        List<String> fileLog = files.stream()
+            .map(file -> file.getOriginalFilename() + "(" + file.getSize() + "B)").toList();
+        JsonNode response = call("/consult/files", attempt -> post(consultFilesClient, "/consult/files", attempt)
+            .attribute(AiCallLogInterceptor.FILES, fileLog)
             .contentType(MediaType.MULTIPART_FORM_DATA)
             .body(body)
             .retrieve()
@@ -135,8 +146,8 @@ public class AiServerClient {
     }
 
     private <T> T postKeepingRaw(String path, Object request, Class<T> type, BiFunction<T, JsonNode, T> attachRaw) {
-        return call(path, () -> {
-            JsonNode raw = conversationClient.post().uri(path).body(request).retrieve().body(JsonNode.class);
+        return call(path, attempt -> {
+            JsonNode raw = post(conversationClient, path, attempt).body(request).retrieve().body(JsonNode.class);
             T parsed = raw == null ? null : JsonMapper.shared().treeToValue(raw, type);
             return parsed == null ? null : attachRaw.apply(parsed, raw);
         });
@@ -144,8 +155,7 @@ public class AiServerClient {
 
     // 응답 모양은 해석하지 않고 JSON 인지만 확인한다
     public JsonNode architectures(ArchitectureRequest request) {
-        JsonNode response = call("/architectures", () -> architecturesClient.post()
-            .uri("/architectures")
+        JsonNode response = call("/architectures", attempt -> post(architecturesClient, "/architectures", attempt)
             .body(request)
             .retrieve()
             .body(JsonNode.class));
@@ -157,8 +167,7 @@ public class AiServerClient {
 
     // {project, files: {파일 이름: 내용}, warnings}
     public JsonNode terraform(TerraformRequest request) {
-        JsonNode response = call("/terraform", () -> terraformClient.post()
-            .uri("/terraform")
+        JsonNode response = call("/terraform", attempt -> post(terraformClient, "/terraform", attempt)
             .body(new TerraformBody(request, "json"))
             .retrieve()
             .body(JsonNode.class));
@@ -170,8 +179,7 @@ public class AiServerClient {
 
     // 파일 이름은 AI 서버의 Content-Disposition 을 그대로 쓴다
     public TerraformFile terraformFile(TerraformRequest request, TerraformFormat format) {
-        ResponseEntity<byte[]> response = call("/terraform", () -> terraformClient.post()
-            .uri("/terraform")
+        ResponseEntity<byte[]> response = call("/terraform", attempt -> post(terraformClient, "/terraform", attempt)
             .body(new TerraformBody(request, format.name().toLowerCase(Locale.ROOT)))
             .retrieve()
             .toEntity(byte[].class));
@@ -196,21 +204,44 @@ public class AiServerClient {
      * 첫 줄 전에 온 HTTP 오류만 재시도 대상이고, 스트림이 시작된 뒤의 실패는 다시 보내지 않는다.
      */
     public void chat(ChatRequest request, Consumer<ChatEvent> onEvent) {
-        call("/chat", () -> {
-            long sentAt = System.nanoTime();
-            return conversationClient.post()
-                .uri("/chat")
-                .body(request)
-                .exchange((httpRequest, response) -> {
-                    if (response.getStatusCode().isError()) {
-                        throw response.createException();
-                    }
-                    if (!readEvents(response.getBody(), onEvent)) {
-                        throw streamBroken(sentAt);
-                    }
-                    return null;
-                });
-        });
+        ChatSummary summary = new ChatSummary();
+        try {
+            call("/chat", attempt -> {
+                long sentAt = System.nanoTime();
+                return post(conversationClient, "/chat", attempt)
+                    .body(request)
+                    .exchange((httpRequest, response) -> {
+                        if (response.getStatusCode().isError()) {
+                            throw response.createException();
+                        }
+                        if (!readEvents(response.getBody(), summary.andThen(onEvent))) {
+                            throw streamBroken(sentAt);
+                        }
+                        return null;
+                    });
+            });
+        } finally {
+            AiCallLogInterceptor.AI_CALL.info("ai_chat_summary POST /chat sources={} refused={} error={} answer={}",
+                summary.sources, summary.refused, summary.error, summary.answer);
+        }
+    }
+
+    // 스트림은 줄마다 남기지 않고 끝날 때 한 줄로 남긴다. 호출 하나 안에서만 쓴다
+    private static final class ChatSummary implements Consumer<ChatEvent> {
+        private final StringBuilder answer = new StringBuilder();
+        private int sources;
+        private boolean refused;
+        private String error;
+
+        @Override
+        public void accept(ChatEvent event) {
+            switch (event) {
+                case ChatEvent.Sources s -> sources = s.sources() == null ? 0 : s.sources().size();
+                case ChatEvent.Delta d -> answer.append(d.text());
+                case ChatEvent.Done d -> refused = d.refused();
+                case ChatEvent.Failure f -> error = f.code() + "(retryable=" + f.retryable() + ")";
+            }
+        }
     }
 
     // 끊기면 false. 시간 제한이 지나면 요청 팩토리가 본문을 닫아 끊김과 같은 모습이 된다
@@ -251,26 +282,38 @@ public class AiServerClient {
         return new AiServerException(timedOut ? AiErrorCode.AI_SERVER_TIMEOUT : AiErrorCode.AI_SERVER_UNAVAILABLE);
     }
 
-    private <T> T call(String path, Supplier<T> request) {
-        for (int attempt = 1; ; attempt++) {
-            try {
-                return request.get();
-            } catch (RestClientResponseException e) {
-                AiErrorResponse error = parseError(e.getResponseBodyAsString());
-                boolean retry = error != null && error.retryable() && attempt < MAX_ATTEMPTS;
-                if (!retry) {
-                    throw errorResponseException(path, e.getStatusCode().value(), error);
+    // 시도마다 AI_CALL 로그는 AiCallLogInterceptor 가 남기고, 여기서는 호출이 끝날 때 결과 한 줄을 남긴다
+    private <T> T call(String path, IntFunction<T> request) {
+        long startedAt = System.nanoTime();
+        int attempt = 1;
+        String result = "OK";
+        try {
+            for (; ; attempt++) {
+                try {
+                    return request.apply(attempt);
+                } catch (RestClientResponseException e) {
+                    AiErrorResponse error = parseError(e.getResponseBodyAsString());
+                    boolean retry = error != null && error.retryable() && attempt < MAX_ATTEMPTS;
+                    if (!retry) {
+                        throw errorResponseException(path, e.getStatusCode().value(), error);
+                    }
+                    if (!waitBeforeRetry(path, attempt)) {
+                        throw errorResponseException(path, e.getStatusCode().value(), error);
+                    }
+                } catch (ResourceAccessException e) {
+                    throw accessException(path, e);
+                } catch (JacksonException | RestClientException e) {
+                    // 파싱 예외에 응답 원문이 들어 있을 수 있어 예외 메시지는 남기지 않는다
+                    log.error("AI 서버 응답 처리 실패: {} {}", path, e.getClass().getSimpleName());
+                    throw new AiServerException(AiErrorCode.AI_SERVER_ERROR);
                 }
-                if (!waitBeforeRetry(path, attempt)) {
-                    throw errorResponseException(path, e.getStatusCode().value(), error);
-                }
-            } catch (ResourceAccessException e) {
-                throw accessException(path, e);
-            } catch (JacksonException | RestClientException e) {
-                // 파싱 예외에 응답 원문이 들어 있을 수 있어 예외 메시지는 남기지 않는다
-                log.error("AI 서버 응답 처리 실패: {} {}", path, e.getClass().getSimpleName());
-                throw new AiServerException(AiErrorCode.AI_SERVER_ERROR);
             }
+        } catch (RuntimeException e) {
+            result = e instanceof AiServerException ai ? ai.getErrorCode().getCode() : e.getClass().getSimpleName();
+            throw e;
+        } finally {
+            AiCallLogInterceptor.AI_CALL.info("ai_call_end POST {} attempts={}/{} duration_ms={} result={}", path,
+                attempt, MAX_ATTEMPTS, (System.nanoTime() - startedAt) / 1_000_000, result);
         }
     }
 
