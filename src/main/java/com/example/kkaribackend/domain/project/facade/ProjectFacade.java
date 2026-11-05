@@ -53,4 +53,11 @@ public class ProjectFacade {
             .orElseThrow(ProjectNotFoundException::new)
             .markAnalyzed();
     }
+
+    @Transactional
+    public void markRecommended(Long projectId) {
+        projectRepository.findById(projectId)
+            .orElseThrow(ProjectNotFoundException::new)
+            .markRecommended();
+    }
 }

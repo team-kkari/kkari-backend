@@ -3,6 +3,7 @@ package com.example.kkaribackend.domain.architecture.service;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisJob;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
+import com.example.kkaribackend.domain.project.facade.ProjectFacade;
 import com.example.kkaribackend.global.ai.AiServerClient;
 import com.example.kkaribackend.global.ai.exception.AiServerException;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ import tools.jackson.databind.JsonNode;
 public class RunArchitectureService {
     private final AnalysisJobRepository analysisJobRepository;
     private final AiServerClient aiServerClient;
+    private final ProjectFacade projectFacade;
 
     private static final String UNEXPECTED_FAILURE_REASON = "추천 아키텍처 생성 중 예상하지 못한 오류가 발생했습니다.";
 
@@ -39,6 +41,7 @@ public class RunArchitectureService {
         try {
             JsonNode architectures = aiServerClient.architectures(event.request());
             job.succeed(architectures.toString());
+            projectFacade.markRecommended(job.getProject().getId());
         } catch (AiServerException e) {
             job.fail(e.getMessage());
         } catch (RuntimeException e) {
