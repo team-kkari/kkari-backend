@@ -86,7 +86,8 @@ public class SendChatMessageService {
         int responseSeq = user != null ? user.getSeq() + 1 : messages.isEmpty() ? 1 : messages.getLast().getSeq() + 1;
         IntakeResponseDto result = aiServerClient.intake(new IntakeRequestDto(messages.stream()
             .map(m -> new AiMessage(m.getRole().name().toLowerCase(Locale.ROOT), m.getContent())).toList(),
-            infraContext, "project-" + projectId, null));
+            infraContext, "project-" + projectId, null,
+            project.getInfraStatus() == null ? null : project.getInfraStatus().name()));
         ChatMessage assistant;
         try {
             assistant = chatMessageWriter.saveAssistant(project, responseSeq, result, hash);

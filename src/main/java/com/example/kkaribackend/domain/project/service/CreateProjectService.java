@@ -1,5 +1,6 @@
 package com.example.kkaribackend.domain.project.service;
 
+import com.example.kkaribackend.domain.project.domain.InfraStatus;
 import com.example.kkaribackend.domain.project.domain.Project;
 import com.example.kkaribackend.domain.project.domain.repository.ProjectRepository;
 import com.example.kkaribackend.domain.project.presentation.dto.request.CreateProjectRequest;
@@ -22,6 +23,7 @@ public class CreateProjectService {
                 .user(userFacade.getCurrentUser())
                 .companyName(request.companyName())
                 .contactName(request.contactName())
+                .infraStatus(request.infraStatus() == null ? InfraStatus.EXISTING : request.infraStatus())
                 .build()
         );
         return new CreateProjectResponse(project.getId());

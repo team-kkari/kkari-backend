@@ -1,6 +1,7 @@
 package com.example.kkaribackend.domain.project.presentation.dto.response;
 
 import com.example.kkaribackend.domain.project.domain.AwsConnectionStatus;
+import com.example.kkaribackend.domain.project.domain.InfraStatus;
 import com.example.kkaribackend.domain.project.domain.Project;
 import com.example.kkaribackend.domain.project.domain.ProjectStage;
 import lombok.Builder;
@@ -17,6 +18,7 @@ public record ProjectDetailResponse(
     String serviceName,
     String companyName,
     String contactName,
+    @Schema(description = "인프라 상태. EXISTING=이미 구축함, NONE=신규 구축. 값이 없던 기존 프로젝트는 EXISTING") InfraStatus infraStatus,
     Map<String, String> answers,
     ProjectStage stage,
     AwsConnectionStatus awsConnectionStatus,
@@ -31,6 +33,7 @@ public record ProjectDetailResponse(
             .serviceName(project.getServiceName())
             .companyName(project.getCompanyName())
             .contactName(project.getContactName())
+            .infraStatus(project.getInfraStatus() == null ? InfraStatus.EXISTING : project.getInfraStatus())
             .answers(project.getAnswers())
             .stage(project.getStage())
             .awsConnectionStatus(project.getAwsConnectionStatus())

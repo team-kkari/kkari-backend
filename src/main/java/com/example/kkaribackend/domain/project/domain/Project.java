@@ -71,6 +71,11 @@ public class Project {
     @Column(length = 20, nullable = false)
     private AwsConnectionStatus awsConnectionStatus = AwsConnectionStatus.NOT_CONNECTED;
 
+    // 의뢰 신청 때 고른 인프라 상태. 고르지 않은 기존 프로젝트와 고객 접수 서비스는 null(이미 구축한 것으로 본다)
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private InfraStatus infraStatus;
+
     // 고객 요구사항. 항상 통째로 교체하므로 JSON 한 컬럼에 둔다. 입력 전에는 null
     @JdbcTypeCode(SqlTypes.JSON)
     private Requirements requirements;

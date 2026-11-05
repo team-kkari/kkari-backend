@@ -1,5 +1,6 @@
 package com.example.kkaribackend.domain.project.presentation.dto.response;
 
+import com.example.kkaribackend.domain.project.domain.InfraStatus;
 import com.example.kkaribackend.domain.project.domain.Project;
 import com.example.kkaribackend.domain.project.domain.ProjectStage;
 import lombok.Builder;
@@ -18,6 +19,7 @@ public record ProjectListResponse(
     String serviceName,
     String companyName,
     String contactName,
+    @Schema(description = "인프라 상태. EXISTING=이미 구축함, NONE=신규 구축. 값이 없던 기존 프로젝트는 EXISTING") InfraStatus infraStatus,
     ProjectStage stage,
     @Schema(description = "최근 성공한 인프라 분석의 월 예상 비용 합(USD). 미수집·부분 누락은 null")
     BigDecimal monthlyCost,
@@ -33,6 +35,7 @@ public record ProjectListResponse(
             .serviceName(project.getServiceName())
             .companyName(project.getCompanyName())
             .contactName(project.getContactName())
+            .infraStatus(project.getInfraStatus() == null ? InfraStatus.EXISTING : project.getInfraStatus())
             .stage(project.getStage())
             .monthlyCost(monthlyCost)
             .createdAt(ResponseTime.withOffset(project.getCreatedAt()))
