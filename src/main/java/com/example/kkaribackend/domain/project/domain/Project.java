@@ -4,7 +4,9 @@ import com.example.kkaribackend.domain.user.domain.User;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -56,6 +58,10 @@ public class Project {
     @Column(length = 20, nullable = false)
     private AwsConnectionStatus awsConnectionStatus = AwsConnectionStatus.NOT_CONNECTED;
 
+    // 고객 요구사항. 항상 통째로 교체하므로 JSON 한 컬럼에 둔다. 입력 전에는 null
+    @JdbcTypeCode(SqlTypes.JSON)
+    private Requirements requirements;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -71,5 +77,9 @@ public class Project {
 
     public void updateAwsConnectionStatus(AwsConnectionStatus awsConnectionStatus) {
         this.awsConnectionStatus = awsConnectionStatus;
+    }
+
+    public void updateRequirements(Requirements requirements) {
+        this.requirements = requirements;
     }
 }
