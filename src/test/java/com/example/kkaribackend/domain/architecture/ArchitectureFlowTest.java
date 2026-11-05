@@ -143,6 +143,24 @@ class ArchitectureFlowTest {
     }
 
     @Test
+    void 신규_구축_프로젝트는_분석_없이_상담_내용으로_설계를_시작한다() throws Exception {
+        Project fresh = projectRepository.save(Project.builder().user(user).companyName("신규").contactName("담당")
+            .infraStatus(com.example.kkaribackend.domain.project.domain.InfraStatus.NONE).build());
+        fresh.updateRequirements(Requirements.builder().content("워크로드: 쇼핑몰").build());
+        projectRepository.saveAndFlush(fresh);
+        when(aiServerClient.architectures(any())).thenReturn(objectMapper.readTree(AI_RESPONSE));
+
+        mockMvc.perform(post("/v1/projects/" + fresh.getId() + "/architectures").with(owner))
+            .andExpect(status().isAccepted());
+
+        ArgumentCaptor<ArchitectureRequest> request = ArgumentCaptor.forClass(ArchitectureRequest.class);
+        verify(aiServerClient, timeout(2000)).architectures(request.capture());
+        assertThat(request.getValue().infra()).isEqualTo("[신규 구축] 기존 AWS 인프라 없음");
+        assertThat(request.getValue().goal()).contains("워크로드: 쇼핑몰");
+        assertThat(request.getValue().currentMonthlyUsd()).isNull();
+    }
+
+    @Test
     void 기존_미지원_통화는_작업을_만들거나_AI를_호출하기_전에_400으로_알린다() throws Exception {
         saveSucceededAnalysis();
         project.updateRequirements(Requirements.builder().content("기존 데이터").currency("JPY").build());
