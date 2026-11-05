@@ -17,7 +17,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.ResourceAccessException;
@@ -27,12 +27,14 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.exc.InvalidTypeIdException;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.http.HttpClient;
 import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
@@ -40,7 +42,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -50,13 +51,11 @@ import java.util.function.Supplier;
 @Slf4j
 public class AiServerClient {
 
-    private static final Duration HEALTH_TIMEOUT = Duration.ofSeconds(5);
-    private static final Duration CONSULT_FILES_TIMEOUT = Duration.ofSeconds(120);
-    private static final Duration CONVERSATION_TIMEOUT = Duration.ofSeconds(60);
-    private static final Duration ARCHITECTURES_TIMEOUT = Duration.ofSeconds(300);
-    private static final Duration TERRAFORM_TIMEOUT = Duration.ofSeconds(10);
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(3);
+    private static final Duration RETRY_DELAY = Duration.ofSeconds(1);
     private static final int MAX_ATTEMPTS = 3;
 
+    private final Timeouts timeouts;
     private final RestClient healthClient;
     private final RestClient consultFilesClient;
     private final RestClient conversationClient;
@@ -64,22 +63,34 @@ public class AiServerClient {
     private final RestClient terraformClient;
     private final Duration retryDelay;
 
-    // requestFactory: read timeout 을 받아 그 timeout 을 쓰는 요청 팩토리를 만든다
-    public AiServerClient(RestClient.Builder builder, Function<Duration, ClientHttpRequestFactory> requestFactory,
-                          Duration retryDelay) {
-        this.healthClient = builder.clone().requestFactory(requestFactory.apply(HEALTH_TIMEOUT)).build();
-        this.consultFilesClient = builder.clone().requestFactory(requestFactory.apply(CONSULT_FILES_TIMEOUT)).build();
-        this.conversationClient = builder.clone().requestFactory(requestFactory.apply(CONVERSATION_TIMEOUT)).build();
-        this.architecturesClient = builder.clone().requestFactory(requestFactory.apply(ARCHITECTURES_TIMEOUT)).build();
-        this.terraformClient = builder.clone().requestFactory(requestFactory.apply(TERRAFORM_TIMEOUT)).build();
+    public AiServerClient(String baseUrl) {
+        this(baseUrl, Timeouts.SPEC, RETRY_DELAY);
+    }
+
+    AiServerClient(String baseUrl, Timeouts timeouts, Duration retryDelay) {
+        HttpClient httpClient = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+        this.timeouts = timeouts;
+        this.healthClient = client(baseUrl, httpClient, timeouts.health());
+        this.consultFilesClient = client(baseUrl, httpClient, timeouts.consultFiles());
+        this.conversationClient = client(baseUrl, httpClient, timeouts.conversation());
+        this.architecturesClient = client(baseUrl, httpClient, timeouts.architectures());
+        this.terraformClient = client(baseUrl, httpClient, timeouts.terraform());
         this.retryDelay = retryDelay;
     }
 
+    // 이 팩토리의 read timeout 은 응답 본문을 다 읽을 때까지의 전체 시간 제한이다
+    private static RestClient client(String baseUrl, HttpClient httpClient, Duration readTimeout) {
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(readTimeout);
+        return RestClient.builder().baseUrl(baseUrl).requestFactory(requestFactory).build();
+    }
+
+    // 재시도하지 않는다. 상태 확인은 한 번에 빨리 끝나야 한다
     public boolean isHealthy() {
         try {
-            Health health = call("/health", () -> healthClient.get().uri("/health").retrieve().body(Health.class));
+            Health health = healthClient.get().uri("/health").retrieve().body(Health.class);
             return health != null && health.ok();
-        } catch (AiServerException e) {
+        } catch (RestClientException e) {
             return false;
         }
     }
@@ -101,12 +112,13 @@ public class AiServerClient {
         return fileAnalysis;
     }
 
+    // 원본 응답도 함께 돌려준다. 상담 기록에 그대로 보관한다
     public ConsultResponse consult(ConsultRequest request) {
-        ConsultResponse response = call("/consult", () -> conversationClient.post()
-            .uri("/consult")
-            .body(request)
-            .retrieve()
-            .body(ConsultResponse.class));
+        ConsultResponse response = call("/consult", () -> {
+            JsonNode raw = conversationClient.post().uri("/consult").body(request).retrieve().body(JsonNode.class);
+            ConsultResponse parsed = raw == null ? null : JsonMapper.shared().treeToValue(raw, ConsultResponse.class);
+            return parsed == null ? null : parsed.toBuilder().rawResponse(raw).build();
+        });
         if (response == null || isBlank(response.reply())) {
             throw invalidResponse("/consult");
         }
@@ -172,34 +184,59 @@ public class AiServerClient {
      * 첫 줄 전에 온 HTTP 오류만 재시도 대상이고, 스트림이 시작된 뒤의 실패는 다시 보내지 않는다.
      */
     public void chat(ChatRequest request, Consumer<ChatEvent> onEvent) {
-        boolean finished = call("/chat", () -> conversationClient.post()
-            .uri("/chat")
-            .body(request)
-            .exchange((httpRequest, response) -> {
-                if (response.getStatusCode().isError()) {
-                    throw response.createException();
+        call("/chat", () -> {
+            long sentAt = System.nanoTime();
+            return conversationClient.post()
+                .uri("/chat")
+                .body(request)
+                .exchange((httpRequest, response) -> {
+                    if (response.getStatusCode().isError()) {
+                        throw response.createException();
+                    }
+                    if (!readEvents(response.getBody(), onEvent)) {
+                        throw streamBroken(sentAt);
+                    }
+                    return null;
+                });
+        });
+    }
+
+    // 끊기면 false. 시간 제한이 지나면 요청 팩토리가 본문을 닫아 끊김과 같은 모습이 된다
+    private boolean readEvents(InputStream body, Consumer<ChatEvent> onEvent) {
+        try {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8));
+            for (String line = reader.readLine(); line != null; line = reader.readLine()) {
+                ChatEvent event = parseEvent(line);
+                if (event == null) {
+                    continue;
                 }
-                return readEvents(response.getBody(), onEvent);
-            }));
-        if (!finished) {
-            log.error("AI 서버 스트림이 끝 이벤트 없이 끊겼습니다: /chat");
-            throw new AiServerException(AiErrorCode.AI_SERVER_UNAVAILABLE);
+                onEvent.accept(event);
+                if (event instanceof ChatEvent.Done || event instanceof ChatEvent.Failure) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (IOException e) {
+            return false;
         }
     }
 
-    private boolean readEvents(InputStream body, Consumer<ChatEvent> onEvent) throws IOException {
-        BufferedReader reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8));
-        for (String line = reader.readLine(); line != null; line = reader.readLine()) {
-            if (line.isBlank()) {
-                continue;
-            }
-            ChatEvent event = JsonMapper.shared().readValue(line, ChatEvent.class);
-            onEvent.accept(event);
-            if (event instanceof ChatEvent.Done || event instanceof ChatEvent.Failure) {
-                return true;
-            }
+    // 빈 줄과 나중에 AI 서버에 생길 이벤트 종류는 null 로 건너뛴다
+    private static ChatEvent parseEvent(String line) {
+        if (line.isBlank()) {
+            return null;
         }
-        return false;
+        try {
+            return JsonMapper.shared().readValue(line, ChatEvent.class);
+        } catch (InvalidTypeIdException e) {
+            return null;
+        }
+    }
+
+    private AiServerException streamBroken(long sentAt) {
+        boolean timedOut = Duration.ofNanos(System.nanoTime() - sentAt).compareTo(timeouts.conversation()) >= 0;
+        log.error("AI 서버 스트림이 끝 이벤트 없이 끊겼습니다: /chat {}", timedOut ? "시간 초과" : "연결 끊김");
+        return new AiServerException(timedOut ? AiErrorCode.AI_SERVER_TIMEOUT : AiErrorCode.AI_SERVER_UNAVAILABLE);
     }
 
     private <T> T call(String path, Supplier<T> request) {
@@ -246,22 +283,27 @@ public class AiServerClient {
     private AiServerException toException(String path, int status, AiErrorResponse error) {
         if (error == null) {
             log.error("AI 서버 오류 응답: {} {}", path, status);
-            return new AiServerException(status == 429 || status == 503
-                ? AiErrorCode.AI_SERVER_UNAVAILABLE : AiErrorCode.AI_SERVER_ERROR);
+            return new AiServerException(switch (status) {
+                case 429, 503 -> AiErrorCode.AI_SERVER_UNAVAILABLE;
+                case 504 -> AiErrorCode.AI_SERVER_TIMEOUT;
+                default -> AiErrorCode.AI_SERVER_ERROR;
+            });
         }
-        String code = error.code() != null && error.code().matches("[A-Z_]{1,64}") ? error.code() : "";
+        String code = error.code() == null ? "" : error.code();
+        String loggedCode = code.matches("[A-Z_]{1,64}") ? code : "";
+        List<String> fields = error.errors() == null ? List.of()
+            : error.errors().stream().map(AiErrorResponse.FieldError::field).toList();
         // 오류 코드와 필드 이름만 남긴다. message 에는 고객이 올린 파일 이름 등이 들어갈 수 있다
-        log.error("AI 서버 오류 응답: {} {} {} {}", path, status, code, error.errors() == null ? List.of()
-            : error.errors().stream().map(AiErrorResponse.FieldError::field).toList());
+        log.error("AI 서버 오류 응답: {} {} {} {}", path, status, loggedCode, fields);
         if (error.retryable()) {
             return new AiServerException(AiErrorCode.AI_SERVER_UNAVAILABLE);
         }
         return switch (code) {
             case "REFUSED" -> new AiServerException(AiErrorCode.AI_REQUEST_REFUSED);
-            // 고객이 올린 파일을 하나도 분석할 수 없을 때처럼 이유를 고객에게 보여 줘야 해서 AI 문구를 그대로 쓴다
-            case "INVALID_REQUEST" -> isBlank(error.message())
-                ? new AiServerException(AiErrorCode.AI_INVALID_REQUEST)
-                : new AiServerException(AiErrorCode.AI_INVALID_REQUEST, error.message());
+            // 파일 분석의 INVALID_REQUEST 만 고객 파일 탓이라 AI 문구를 보여 준다. 다른 엔드포인트에서는 우리가 잘못 보낸 요청이다
+            case "INVALID_REQUEST" -> path.equals("/consult/files") && !isBlank(error.message())
+                ? new AiServerException(AiErrorCode.AI_INVALID_REQUEST, error.message())
+                : new AiServerException(AiErrorCode.AI_SERVER_ERROR);
             default -> new AiServerException(AiErrorCode.AI_SERVER_ERROR);
         };
     }
@@ -287,6 +329,12 @@ public class AiServerClient {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    record Timeouts(Duration health, Duration consultFiles, Duration conversation, Duration architectures,
+                    Duration terraform) {
+        static final Timeouts SPEC = new Timeouts(Duration.ofSeconds(5), Duration.ofSeconds(120),
+            Duration.ofSeconds(60), Duration.ofSeconds(300), Duration.ofSeconds(10));
     }
 
     private record Health(boolean ok) {

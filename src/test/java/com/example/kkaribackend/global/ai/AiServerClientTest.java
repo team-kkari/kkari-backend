@@ -26,10 +26,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.ClientHttpRequestFactory;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.mock.web.MockMultipartFile;
-import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -49,7 +46,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Function;
 import java.util.function.IntConsumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -87,24 +83,12 @@ class AiServerClientTest {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", this::handle);
         server.start();
-        client = client(this::factory);
+        client = client(AiServerClient.Timeouts.SPEC);
     }
 
     @AfterEach
     void tearDown() {
         server.stop(0);
-    }
-
-    @Test
-    void 엔드포인트마다_명세의_read_timeout을_쓴다() {
-        List<Duration> timeouts = new ArrayList<>();
-        client(timeout -> {
-            timeouts.add(timeout);
-            return factory(timeout);
-        });
-
-        assertThat(timeouts).containsExactlyInAnyOrder(Duration.ofSeconds(5), Duration.ofSeconds(120),
-            Duration.ofSeconds(60), Duration.ofSeconds(300), Duration.ofSeconds(10));
     }
 
     @Test
@@ -117,6 +101,14 @@ class AiServerClientTest {
         assertThat(client.isHealthy()).isFalse();
         assertThat(client.isHealthy()).isFalse();
         assertThat(requests.getFirst().path()).isEqualTo("/health");
+    }
+
+    @Test
+    void health는_재시도_가능_오류여도_다시_보내지_않는다() {
+        replyJson(503, ERROR_BODY.formatted("UPSTREAM_UNAVAILABLE", "잠시 후", true));
+
+        assertThat(client.isHealthy()).isFalse();
+        assertThat(requests).hasSize(1);
     }
 
     @Test
@@ -163,7 +155,7 @@ class AiServerClientTest {
     }
 
     @Test
-    void consult_요청은_snake_case이고_화면용_필드를_읽는다() {
+    void consult_요청은_snake_case이고_질문을_읽으며_원본을_보존한다() {
         replyJson(200, """
             {"reply":"어떤 고민이 있으세요?","question":{"id":"Q2","step":1,"label":"받고 싶은 것","priority":"required",
               "input":"multi","options":[{"value":"cost","label":"요금 절감"}]},
@@ -181,11 +173,9 @@ class AiServerClientTest {
         assertThat(response.reply()).isEqualTo("어떤 고민이 있으세요?");
         assertThat(response.question().input()).isEqualTo("multi");
         assertThat(response.question().options()).containsExactly(new ConsultResponse.Option("cost", "요금 절감"));
-        assertThat(response.quickReplies()).containsExactly("잘 모르겠어요");
-        assertThat(response.missingLabels()).containsExactly("받고 싶은 것");
-        assertThat(response.recommendedMissing()).containsExactly("Q6");
-        assertThat(response.profile().get("concern").isNull()).isTrue();
         assertThat(response.ready()).isFalse();
+        assertThat(response.rawResponse().get("missing_labels").get(0).asString()).isEqualTo("받고 싶은 것");
+        assertThat(response.rawResponse().get("new_field").asInt()).isEqualTo(1);
     }
 
     @Test
@@ -364,8 +354,9 @@ class AiServerClientTest {
     }
 
     @Test
-    void chat_스트림_도중_시간_초과로_끊기면_AI_SERVER_UNAVAILABLE이고_다시_보내지_않는다() {
-        AiServerClient slowClient = client(timeout -> factory(Duration.ofMillis(300)));
+    void chat_스트림_도중_시간_제한이_지나_끊기면_AI_SERVER_TIMEOUT이고_다시_보내지_않는다() {
+        Duration limit = Duration.ofMillis(300);
+        AiServerClient slowClient = client(new AiServerClient.Timeouts(limit, limit, limit, limit, limit));
         replies.add(new Reply(200, NDJSON, Duration.ZERO, List.of(line("{\"type\":\"sources\",\"sources\":[]}"),
             line("{\"type\":\"done\",\"refused\":false}")), index -> {
                 if (index == 1) {
@@ -374,9 +365,8 @@ class AiServerClientTest {
             }));
         List<ChatEvent> events = new ArrayList<>();
 
-        // JDK 요청 팩토리는 timeout 이 지나면 본문을 닫아 버려 일반 연결 끊김과 구분되지 않는다
         assertError(() -> slowClient.chat(ChatRequest.builder().question("q").build(), events::add),
-            AiErrorCode.AI_SERVER_UNAVAILABLE);
+            AiErrorCode.AI_SERVER_TIMEOUT);
         assertThat(events).hasSize(1);
         assertThat(requests).hasSize(1);
     }
@@ -427,8 +417,18 @@ class AiServerClientTest {
     }
 
     @Test
-    void chat_알_수_없는_줄은_AI_SERVER_ERROR() {
-        replyStream("{\"type\":\"unknown\"}");
+    void chat_알_수_없는_이벤트는_건너뛴다() {
+        replyStream("{\"type\":\"ping\"}", "{\"type\":\"done\",\"refused\":false}");
+        List<ChatEvent> events = new ArrayList<>();
+
+        client.chat(ChatRequest.builder().question("q").build(), events::add);
+
+        assertThat(events).containsExactly(new ChatEvent.Done(false));
+    }
+
+    @Test
+    void chat_JSON이_아닌_줄은_AI_SERVER_ERROR() {
+        replyStream("not json");
 
         assertError(() -> client.chat(ChatRequest.builder().question("q").build(), event -> {
         }), AiErrorCode.AI_SERVER_ERROR);
@@ -440,7 +440,7 @@ class AiServerClientTest {
         "503, UPSTREAM_UNAVAILABLE, true, AI_SERVER_UNAVAILABLE, 3",
         "500, INTERNAL_ERROR, true, AI_SERVER_UNAVAILABLE, 3",
         "422, REFUSED, false, AI_REQUEST_REFUSED, 1",
-        "400, INVALID_REQUEST, false, AI_INVALID_REQUEST, 1",
+        "400, INVALID_REQUEST, false, AI_SERVER_ERROR, 1",
         "422, VALIDATION_ERROR, false, AI_SERVER_ERROR, 1",
         "404, NOT_FOUND, false, AI_SERVER_ERROR, 1",
         "405, METHOD_NOT_ALLOWED, false, AI_SERVER_ERROR, 1",
@@ -464,6 +464,7 @@ class AiServerClientTest {
     @CsvSource({
         "429, AI_SERVER_UNAVAILABLE",
         "503, AI_SERVER_UNAVAILABLE",
+        "504, AI_SERVER_TIMEOUT",
         "502, AI_SERVER_ERROR",
         "500, AI_SERVER_ERROR"
     })
@@ -485,7 +486,7 @@ class AiServerClientTest {
 
     @Test
     @ExtendWith(OutputCaptureExtension.class)
-    void INVALID_REQUEST의_AI_문구는_고객에게_보여주되_로그에는_남기지_않는다(CapturedOutput output) {
+    void 파일_분석의_INVALID_REQUEST는_AI_문구를_고객에게_보여주되_로그에는_남기지_않는다(CapturedOutput output) {
         replyJson(400, ERROR_BODY.formatted("INVALID_REQUEST", "분석할 수 있는 파일이 없습니다: 고객파일.xlsx", false));
 
         assertThatThrownBy(() -> client.consultFiles(List.of()))
@@ -496,12 +497,23 @@ class AiServerClientTest {
     }
 
     @Test
-    void 응답_시간_초과면_AI_SERVER_TIMEOUT이고_다시_보내지_않는다() {
-        AiServerClient slowClient = client(timeout -> factory(Duration.ofMillis(200)));
+    void 파일_분석이_아닌_INVALID_REQUEST는_우리_요청_오류라_AI_문구를_보여주지_않는다() {
+        replyJson(400, ERROR_BODY.formatted("INVALID_REQUEST", "required_fields 에 알 수 없는 항목", false));
+
+        assertThatThrownBy(() -> client.intake(INTAKE_REQUEST))
+            .isInstanceOf(AiServerException.class)
+            .hasMessage(AiErrorCode.AI_SERVER_ERROR.getMessage())
+            .extracting("errorCode").isEqualTo(AiErrorCode.AI_SERVER_ERROR);
+    }
+
+    @Test
+    void terraform_응답이_terraform_시간_제한을_넘으면_AI_SERVER_TIMEOUT이고_다시_보내지_않는다() {
+        Duration spec = Duration.ofSeconds(5);
+        AiServerClient slowClient = client(new AiServerClient.Timeouts(spec, spec, spec, spec, Duration.ofMillis(200)));
         replies.add(new Reply(200, Map.of(), Duration.ofSeconds(1), List.of(), index -> {
         }));
 
-        assertError(() -> slowClient.architectures(ARCHITECTURE_REQUEST), AiErrorCode.AI_SERVER_TIMEOUT);
+        assertError(() -> slowClient.terraform(TERRAFORM_REQUEST), AiErrorCode.AI_SERVER_TIMEOUT);
         assertThat(requests).hasSize(1);
     }
 
@@ -512,15 +524,8 @@ class AiServerClientTest {
         assertError(() -> client.intake(INTAKE_REQUEST), AiErrorCode.AI_SERVER_UNAVAILABLE);
     }
 
-    private AiServerClient client(Function<Duration, ClientHttpRequestFactory> factory) {
-        return new AiServerClient(RestClient.builder().baseUrl("http://127.0.0.1:" + server.getAddress().getPort()),
-            factory, Duration.ofMillis(10));
-    }
-
-    private JdkClientHttpRequestFactory factory(Duration readTimeout) {
-        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory();
-        factory.setReadTimeout(readTimeout);
-        return factory;
+    private AiServerClient client(AiServerClient.Timeouts timeouts) {
+        return new AiServerClient("http://127.0.0.1:" + server.getAddress().getPort(), timeouts, Duration.ofMillis(10));
     }
 
     private void handle(HttpExchange exchange) throws IOException {
