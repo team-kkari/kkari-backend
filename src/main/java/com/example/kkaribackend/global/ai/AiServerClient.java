@@ -16,6 +16,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.core.JacksonException;
 
 import java.net.SocketTimeoutException;
 import java.net.http.HttpConnectTimeoutException;
@@ -38,11 +39,25 @@ public class AiServerClient {
     }
 
     public IntakeResponseDto intake(IntakeRequestDto request) {
-        return call("/intake", () -> aiRestClient.post()
-            .uri("/intake")
-            .body(request)
-            .retrieve()
-            .body(IntakeResponseDto.class));
+        IntakeResponseDto response = call("/intake", () -> {
+            String body = aiRestClient.post().uri("/intake").body(request).retrieve().body(String.class);
+            if (body == null || body.isBlank()) {
+                return null;
+            }
+            try {
+                JsonNode raw = JsonMapper.shared().readTree(body);
+                IntakeResponseDto parsed = JsonMapper.shared().treeToValue(raw, IntakeResponseDto.class);
+                return parsed == null ? null : parsed.toBuilder().rawResponse(raw).build();
+            } catch (JacksonException e) {
+                log.error("AI 서버 응답 파싱 실패: /intake");
+                throw new AiServerException(AiErrorCode.AI_SERVER_ERROR);
+            }
+        });
+        if (response == null || response.reply() == null || response.reply().isBlank()) {
+            log.error("AI 서버 응답 형식 오류: /intake");
+            throw new AiServerException(AiErrorCode.AI_SERVER_ERROR);
+        }
+        return response;
     }
 
     public HealthResponse health() {
@@ -65,7 +80,8 @@ public class AiServerClient {
             log.error("AI 서버 연결 실패: {}", path, e);
             throw new AiServerException(AiErrorCode.AI_SERVER_ERROR);
         } catch (RestClientException e) {
-            log.error("AI 서버 요청 실패: {}", path, e);
+            // 파싱 예외에 응답 원문이 포함될 수 있으므로 예외 메시지는 기록하지 않는다.
+            log.error("AI 서버 요청 실패: {} {}", path, e.getClass().getSimpleName());
             throw new AiServerException(AiErrorCode.AI_SERVER_ERROR);
         }
     }

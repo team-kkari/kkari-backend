@@ -12,6 +12,8 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.validation.FieldError;
+import com.example.kkaribackend.global.error.response.ValidErrorResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
@@ -38,9 +40,21 @@ class ValidErrorResponseTest {
             .andExpect(jsonPath("$.code").value("C001"))
             .andExpect(jsonPath("$.errors[0].field").value("password"))
             .andExpect(jsonPath("$.errors[0].reason").exists())
-            .andExpect(jsonPath("$.errors[0].value").doesNotExist())
+            .andExpect(jsonPath("$.errors[0].value").hasJsonPath())
+            .andExpect(jsonPath("$.errors[0].value").value(org.hamcrest.Matchers.nullValue()))
             .andExpect(content().string(not(containsString("Zq9!lk"))));
         assertThat(output.getAll()).doesNotContain("Zq9!lk");
+    }
+
+    @Test
+    void 일반_필드의_검증_오류는_기존_value를_유지한다() {
+        FieldError field = new FieldError("request", "companyName", "company-input", false, null, null, "길이 초과");
+
+        var response = ValidErrorResponse.FieldErrorDetail.from(field);
+
+        assertThat(response.field()).isEqualTo("companyName");
+        assertThat(response.value()).isEqualTo("company-input");
+        assertThat(response.reason()).isEqualTo("길이 초과");
     }
 
     @Test

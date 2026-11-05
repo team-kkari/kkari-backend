@@ -8,6 +8,8 @@ import com.example.kkaribackend.domain.chat.domain.ChatRole;
 import com.example.kkaribackend.domain.chat.domain.repository.ChatMessageRepository;
 import com.example.kkaribackend.domain.chat.service.ChatMessageWriter;
 import com.example.kkaribackend.domain.project.domain.Project;
+import com.example.kkaribackend.domain.project.domain.Requirements;
+import com.example.kkaribackend.domain.project.domain.Priority;
 import com.example.kkaribackend.domain.project.domain.repository.ProjectRepository;
 import com.example.kkaribackend.domain.user.domain.Role;
 import com.example.kkaribackend.domain.user.domain.User;
@@ -27,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.mockito.ArgumentCaptor;
@@ -123,6 +126,7 @@ class ChatControllerTest {
             .andExpect(jsonPath("$.userMessage").doesNotExist())
             .andExpect(jsonPath("$.assistantMessage.role").value("ASSISTANT"))
             .andExpect(jsonPath("$.profile.companyName").value("까리"))
+            .andExpect(jsonPath("$.missing[0]").value("워크로드"))
             .andExpect(jsonPath("$.profile.monthlyBudget").value(0))
             .andExpect(jsonPath("$.profile.containsPersonalData").value(false))
             .andExpect(jsonPath("$.profile.frozenResources").isEmpty())
@@ -166,6 +170,7 @@ class ChatControllerTest {
             .andExpect(jsonPath("$.messages[1].quickReplies[0]").value("까리"))
             .andExpect(jsonPath("$.messages[1].createdAt").exists())
             .andExpect(jsonPath("$.missingFields[0]").value("workload"))
+            .andExpect(jsonPath("$.missing[0]").value("워크로드"))
             .andExpect(jsonPath("$.ready").value(false))
             .andExpect(jsonPath("$.profile.companyName").value("까리"))
             .andExpect(jsonPath("$.profile.monthlyBudget").value(0))
@@ -220,6 +225,84 @@ class ChatControllerTest {
         Long userId = messages().getFirst().getId();
         send(body).andExpect(status().isOk()).andExpect(jsonPath("$.userMessage.id").value(userId));
         assertThat(messages()).hasSize(2);
+    }
+
+    @Test
+    void 다음_대화가_진행되어도_성공했던_메시지의_응답을_그대로_재생한다() throws Exception {
+        String first = "{\"content\":\"첫 메시지\",\"clientMessageId\":\"A\"}";
+        String original = send(first).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        send("{\"content\":\"다음 메시지\",\"clientMessageId\":\"B\"}").andExpect(status().isOk());
+
+        send(first).andExpect(status().isOk()).andExpect(content().json(original));
+
+        assertThat(messages()).hasSize(4);
+        verify(aiServerClient, times(2)).intake(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void 같은_메시지_식별자로_다른_내용을_보내면_성공과_실패_모두_409이다(boolean success) throws Exception {
+        if (!success) {
+            when(aiServerClient.intake(any())).thenThrow(new AiServerException(AiErrorCode.AI_SERVER_TIMEOUT));
+        }
+        send("{\"content\":\"첫 메시지\",\"clientMessageId\":\"same\"}")
+            .andExpect(status().is(success ? 200 : 504));
+
+        send("{\"content\":\"바꾼 메시지\",\"clientMessageId\":\"same\"}")
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("CH003"));
+
+        assertThat(messages()).hasSize(success ? 2 : 1);
+        verify(aiServerClient).intake(any());
+    }
+
+    @ParameterizedTest
+    @EnumSource(AiErrorCode.class)
+    void AI_오류의_재시도_여부와_기존_대화를_보존한다(AiErrorCode error) throws Exception {
+        send("{}").andExpect(status().isOk());
+        when(aiServerClient.intake(any())).thenThrow(new AiServerException(error));
+
+        send("{\"content\":\"추가 답변\",\"clientMessageId\":\"failed\"}")
+            .andExpect(status().is(error.getStatus().value()))
+            .andExpect(jsonPath("$.code").value(error.getCode()))
+            .andExpect(jsonPath("$.retryable").value(error != AiErrorCode.AI_SERVER_ERROR));
+
+        mockMvc.perform(get(url).with(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.messages.length()").value(2))
+            .andExpect(jsonPath("$.messages[1].content").value("추가 답변"))
+            .andExpect(jsonPath("$.missing[0]").value("워크로드"));
+        verify(aiServerClient, times(2)).intake(any());
+    }
+
+    @Test
+    void ready여도_누락_정보와_정형_제약을_유지하고_요구사항을_자동_확정하지_않는다() throws Exception {
+        Requirements original = Requirements.builder().content("엔지니어가 저장한 요구사항")
+            .priorities(List.of(Priority.RELIABILITY)).desiredArchitecture("기존 사용자 입력")
+            .monthlyBudget(new BigDecimal("3000000")).currency("KRW").containsPersonalData(true)
+            .frozenResources(List.of("prod-db")).build();
+        project.updateRequirements(original);
+        projectRepository.save(project);
+        var recommendation = JsonMapper.shared().readTree("""
+            {"infra":"EC2","goal":"비용 절감","priorities":["cost"],"constraints":{
+             "monthly_budget":0,"currency":null,"contains_personal_data":false,"frozen_resources":[]}}
+            """);
+        var raw = JsonMapper.shared().readTree("""
+            {"reply":"확인해 주세요","profile":{"company_name":"까리","new_profile_field":"원본"},
+             "missing":["워크로드"],"missing_fields":["workload"],"ready":true,"new_result_field":{"n":1}}
+            """);
+        when(aiServerClient.intake(any())).thenReturn(IntakeResponseDto.builder().reply("확인해 주세요")
+            .quickReplies(List.of()).profile(REPLY.profile()).missing(List.of("워크로드"))
+            .missingFields(List.of("workload")).ready(true).recommendRequest(recommendation).rawResponse(raw).build());
+        send("{}").andExpect(status().isOk())
+            .andExpect(jsonPath("$.ready").value(true))
+            .andExpect(jsonPath("$.missingFields[0]").value("workload"))
+            .andExpect(jsonPath("$.missing[0]").value("워크로드"));
+
+        assertThat(JsonMapper.shared().readTree(messages().getFirst().getRecommendRequest())).isEqualTo(recommendation);
+        assertThat(JsonMapper.shared().readTree(messages().getFirst().getAiResponse())).isEqualTo(raw);
+        assertThat(projectRepository.findById(project.getId()).orElseThrow().getRequirements()).isEqualTo(original);
+        mockMvc.perform(get(url).with(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.ready").value(true))
+            .andExpect(jsonPath("$.missing[0]").value("워크로드"));
     }
 
     @Test
@@ -362,7 +445,8 @@ class ChatControllerTest {
             .andExpect(jsonPath("$.code").value("C001"))
             .andExpect(jsonPath("$.errors[0].field").value("content"))
             .andExpect(jsonPath("$.errors[0].reason").exists())
-            .andExpect(jsonPath("$.errors[0].value").doesNotExist())
+            .andExpect(jsonPath("$.errors[0].value").hasJsonPath())
+            .andExpect(jsonPath("$.errors[0].value").value(nullValue()))
             .andExpect(content().string(not(containsString("PRIVATE_CHAT_CONTENT_"))));
         send("{\"content\":UNQUOTED_PRIVATE_CHAT}").andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("C001"))

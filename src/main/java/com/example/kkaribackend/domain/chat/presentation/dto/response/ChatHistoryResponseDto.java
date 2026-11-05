@@ -8,6 +8,7 @@ import java.util.List;
 public record ChatHistoryResponseDto(
     List<ChatMessageResponseDto> messages,
     List<String> missingFields,
+    List<String> missing,
     Boolean ready,
     IntakeProfileResponseDto profile
 ) {

@@ -8,6 +8,7 @@ import com.example.kkaribackend.global.ai.dto.IntakeResponseDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.json.JsonMapper;
 
 @Component
 @RequiredArgsConstructor
@@ -26,10 +27,13 @@ public class ChatMessageWriter {
         return chatMessageRepository.saveAndFlush(ChatMessage.builder()
             .project(project).seq(seq).role(ChatRole.ASSISTANT).content(response.reply())
             .quickReplies(response.quickReplies()).profile(response.profile()).missingFields(response.missingFields())
+            .missing(response.missing())
             .ready(response.ready())
             // Hibernate 의 JSON 매퍼와 API 의 Jackson 버전에 의존하지 않도록 JSON 문자열로 둔다
             .recommendRequest(response.recommendRequest() == null || response.recommendRequest().isNull()
                 ? null : response.recommendRequest().toString())
+            .aiResponse(response.rawResponse() == null
+                ? JsonMapper.shared().writeValueAsString(response) : response.rawResponse().toString())
             .infraContextHash(infraContextHash)
             .build());
     }

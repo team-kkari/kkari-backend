@@ -6,6 +6,7 @@ import com.example.kkaribackend.domain.chat.domain.ChatRole;
 import com.example.kkaribackend.domain.chat.domain.repository.ChatMessageRepository;
 import com.example.kkaribackend.domain.chat.exception.ChatTurnNotAllowedException;
 import com.example.kkaribackend.domain.chat.exception.ConcurrentChatMessageException;
+import com.example.kkaribackend.domain.chat.exception.ChatMessageIdConflictException;
 import com.example.kkaribackend.domain.chat.presentation.dto.request.SendChatMessageRequestDto;
 import com.example.kkaribackend.domain.chat.presentation.dto.response.SendChatMessageResponseDto;
 import com.example.kkaribackend.domain.project.domain.Project;
@@ -43,6 +44,9 @@ public class SendChatMessageService {
             user = chatMessageRepository.findByProjectIdAndClientMessageId(projectId, request.clientMessageId())
                 .orElse(null);
             if (user != null) {
+                if (!user.getContent().equals(request.content())) {
+                    throw new ChatMessageIdConflictException();
+                }
                 ChatMessage assistant = chatMessageRepository
                     .findByProjectIdAndSeq(projectId, user.getSeq() + 1)
                     .filter(message -> message.getRole() == ChatRole.ASSISTANT)
@@ -67,6 +71,10 @@ public class SendChatMessageService {
                 throw new ConcurrentChatMessageException();
             }
             messages = chatMessageRepository.findAllByProjectIdOrderBySeqAsc(projectId);
+            // 저장 직후 다른 사용자 메시지가 추가되면 이 요청의 답변 위치를 잃는다.
+            if (messages.getLast().getSeq() != user.getSeq()) {
+                throw new ConcurrentChatMessageException();
+            }
         } else if (!hasContent && !messages.isEmpty()) {
             ChatMessage last = messages.getLast();
             if (last.getRole() == ChatRole.ASSISTANT && hash.equals(last.getInfraContextHash())) {
@@ -74,7 +82,7 @@ public class SendChatMessageService {
             }
         }
 
-        int responseSeq = messages.isEmpty() ? 1 : messages.getLast().getSeq() + 1;
+        int responseSeq = user != null ? user.getSeq() + 1 : messages.isEmpty() ? 1 : messages.getLast().getSeq() + 1;
         IntakeResponseDto result = aiServerClient.intake(new IntakeRequestDto(messages.stream()
             .map(m -> new IntakeRequestDto.Message(m.getRole().name().toLowerCase(Locale.ROOT), m.getContent())).toList(),
             infraContext, "project-" + projectId, null));

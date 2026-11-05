@@ -29,12 +29,19 @@ public record ValidErrorResponse (
     @Builder
     public record FieldErrorDetail(
         String field,
+        String value,
         String reason
     ) {
         public static FieldErrorDetail from(FieldError fieldError) {
             return FieldErrorDetail.builder()
                 .field(fieldError.getField())
+                .value(isPrivateField(fieldError) || fieldError.getRejectedValue() == null
+                    ? null : fieldError.getRejectedValue().toString())
                 .reason(fieldError.getDefaultMessage()).build();
+        }
+
+        private static boolean isPrivateField(FieldError error) {
+            return error.getField().equals("password") || error.getObjectName().equals("sendChatMessageRequestDto");
         }
     }
 }

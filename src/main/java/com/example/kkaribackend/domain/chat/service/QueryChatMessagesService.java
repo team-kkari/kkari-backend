@@ -27,6 +27,7 @@ public class QueryChatMessagesService {
             .reduce((previous, current) -> current).orElse(null);
         return new ChatHistoryResponseDto(messages.stream().map(ChatMessageResponseDto::from).toList(),
             latest == null ? List.of() : latest.getMissingFields(),
+            latest == null ? List.of() : latest.getMissing(),
             latest == null ? null : latest.getReady(), IntakeProfileResponseDto.from(latest == null ? null : latest.getProfile()));
     }
 }

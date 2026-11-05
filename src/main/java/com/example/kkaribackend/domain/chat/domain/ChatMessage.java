@@ -55,10 +55,17 @@ public class ChatMessage {
     @JdbcTypeCode(SqlTypes.JSON)
     private List<String> missingFields;
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    private List<String> missing;
+
     private Boolean ready;
 
     @JdbcTypeCode(SqlTypes.JSON)
     private String recommendRequest;
+
+    // AI 원본 응답. 알려지지 않은 새 필드도 requirements로 변환하지 않고 보존한다.
+    @JdbcTypeCode(SqlTypes.JSON)
+    private String aiResponse;
 
     @Column(length = 64)
     private String infraContextHash;

@@ -2,13 +2,16 @@ package com.example.kkaribackend.domain.chat.presentation;
 
 import com.example.kkaribackend.domain.chat.presentation.dto.request.SendChatMessageRequestDto;
 import com.example.kkaribackend.domain.chat.presentation.dto.response.ChatHistoryResponseDto;
+import com.example.kkaribackend.domain.chat.presentation.dto.response.ChatErrorResponseDto;
 import com.example.kkaribackend.domain.chat.presentation.dto.response.SendChatMessageResponseDto;
 import com.example.kkaribackend.domain.chat.service.QueryChatMessagesService;
 import com.example.kkaribackend.domain.chat.service.SendChatMessageService;
+import com.example.kkaribackend.global.ai.exception.AiServerException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @Tag(name = "Chat")
@@ -32,4 +35,8 @@ public class ChatController {
         return sendChatMessageService.execute(projectId, request);
     }
 
+    @ExceptionHandler(AiServerException.class)
+    public ResponseEntity<ChatErrorResponseDto> handleAiServerException(AiServerException exception) {
+        return ResponseEntity.status(exception.getErrorCode().getStatus()).body(ChatErrorResponseDto.from(exception));
+    }
 }
