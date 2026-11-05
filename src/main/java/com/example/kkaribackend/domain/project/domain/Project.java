@@ -7,6 +7,7 @@ import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
@@ -18,6 +19,8 @@ import java.util.UUID;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 @Builder
 @Getter
+// 서로 다른 필드의 동시 수정이 이전 요구사항·고객사명 등을 덮어쓰지 않도록 변경 컬럼만 갱신한다.
+@DynamicUpdate
 @Table(name = "tbl_project")
 public class Project {
 
@@ -99,6 +102,13 @@ public class Project {
 
     public void updateTerraform(TerraformInfra terraform) {
         this.terraform = terraform;
+    }
+
+    // 불완전한 AI 응답으로 기존 고객사명을 지우거나 DB 길이 제한을 넘기지 않는다.
+    public void updateCompanyNameFromChat(String companyName) {
+        if (companyName != null && !companyName.isBlank() && companyName.strip().length() <= 100) {
+            this.companyName = companyName.strip();
+        }
     }
 
     public boolean isRegisteredBy(Long customerId) {

@@ -22,13 +22,14 @@ public class ChatController {
     private final QueryChatMessagesService queryChatMessagesService;
     private final SendChatMessageService sendChatMessageService;
 
-    @Operation(summary = "대화 기록 조회", description = "대화 전체와 마지막 상담 결과를 돌려준다.")
+    @Operation(summary = "대화 기록 조회", description = "대화 전체와 마지막 상담 결과를 돌려준다. missingFields는 profile과 같은 camelCase다.")
     @GetMapping
     public ChatHistoryResponseDto get(@PathVariable Long projectId) {
         return queryChatMessagesService.execute(projectId);
     }
 
-    @Operation(summary = "챗봇 메시지 전송", description = "메시지를 저장하고 AI 응답을 돌려준다. 내용 없이 상담 시작이나 실패한 응답을 요청할 수 있다.")
+    @Operation(summary = "챗봇 메시지 전송", description = "메시지를 저장하고 AI 응답을 돌려준다. 내용 없이 상담 시작이나 실패한 응답을 요청할 수 있다. "
+        + "유효한 profile.companyName을 프로젝트 고객사명에 반영한다. missingFields는 profile과 같은 camelCase다.")
     @PostMapping
     public SendChatMessageResponseDto send(@PathVariable Long projectId,
                                         @Valid @RequestBody SendChatMessageRequestDto request) {

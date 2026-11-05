@@ -2,6 +2,7 @@ package com.example.kkaribackend.domain.architecture.service;
 
 import com.example.kkaribackend.domain.project.domain.CustomerAnswersFormatter;
 import com.example.kkaribackend.domain.project.domain.Requirements;
+import com.example.kkaribackend.domain.architecture.exception.UnsupportedArchitectureCurrencyException;
 import com.example.kkaribackend.global.ai.dto.ArchitectureRequest;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Cost;
@@ -9,6 +10,9 @@ import com.example.kkaribackend.global.aws.dto.InfraSnapshot.MetricStats;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Resources;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Usage;
 import com.example.kkaribackend.global.terraform.dto.TerraformInfra;
+import com.example.kkaribackend.global.aws.InfraCostSummarizer;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 
@@ -17,6 +21,7 @@ import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -42,8 +47,32 @@ public final class ArchitectureInputFactory {
             .infra(describeInfra(snapshot, terraform))
             .goal(joinNonBlank("\n", describeGoal(requirements), CustomerAnswersFormatter.describe(answers)))
             .priorities(priorityNames(requirements))
+            .constraints(constraints(requirements))
+            .currentMonthlyUsd(currentMonthlyUsd(snapshot))
             .count(count)
             .build();
+    }
+
+    private static JsonNode constraints(Requirements requirements) {
+        if (requirements == null) {
+            return null;
+        }
+        if ((requirements.currency() != null && !List.of("USD", "KRW").contains(requirements.currency()))
+            || (requirements.monthlyBudget() != null && requirements.monthlyBudget().signum() > 0 && requirements.currency() == null)) {
+            throw new UnsupportedArchitectureCurrencyException();
+        }
+        Map<String, Object> constraints = new LinkedHashMap<>();
+        constraints.put("monthly_budget", requirements.monthlyBudget());
+        constraints.put("currency", requirements.currency());
+        constraints.put("contains_personal_data", requirements.containsPersonalData());
+        constraints.put("frozen_resources", requirements.frozenResources());
+        return JsonMapper.shared().valueToTree(constraints);
+    }
+
+    private static BigDecimal currentMonthlyUsd(InfraSnapshot snapshot) {
+        BigDecimal total = InfraCostSummarizer.monthlyUsd(snapshot);
+        // AI 서버는 0 이하를 INVALID_REQUEST로 거절한다. 미수집·부분 합·0은 추정에 맡긴다.
+        return total != null && total.signum() > 0 ? total : null;
     }
 
     private static String describeInfra(InfraSnapshot snapshot, TerraformInfra terraform) {
