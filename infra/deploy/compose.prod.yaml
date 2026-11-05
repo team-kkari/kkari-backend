@@ -4,7 +4,8 @@
 # - postgres 는 호스트 포트를 공개하지 않는다 (외부 포트가 전부 열려 있는 서버이므로).
 # - web(nginx)이 80 으로 프론트 정적 파일을 서빙하고 /v1/ 요청을 backend 로 넘긴다.
 # - backend 는 8080 으로도 직접 공개한다 (배포 확인용. 프론트 연동이 끝나면 닫아도 된다).
-# - AI 서버(kkari-AI)는 아직 컨테이너화 전이다. 준비되면 이 파일에 ai 서비스를 추가한다.
+# - ai(kkari-AI)는 호스트 포트 없이 도커 내부망으로만 쓴다. 이 파일에 없으면 deploy.sh 의 --remove-orphans 가
+#   실행 중인 ai 컨테이너를 지우므로, 서버 전용 compose.ai.yaml 을 따로 두지 말고 이 파일 하나로 관리한다.
 #
 # 프론트 배포 규칙
 # - 프론트 빌드 결과(dist 안의 파일)를 서버의 ~/kkari/frontend/ 에 올리면 바로 서빙된다. 컨테이너 재시작은 필요 없다.
@@ -36,6 +37,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      ai:
+        condition: service_started
     ports:
       - "8080:8080"
     environment:
@@ -57,6 +60,25 @@ services:
       retries: 12
       start_period: 40s
 
+  ai:
+    # 지금은 서버에서 직접 빌드한 kkari-ai:local 을 쓴다. AI 레포 CD 가 GHCR 에 이미지를 올리면 .env 의 AI_IMAGE 만 바꾼다.
+    # 호스트 포트는 공개하지 않는다. backend 가 도커 내부망으로 http://ai:8000 을 부른다.
+    image: ${AI_IMAGE:-kkari-ai:local}
+    restart: unless-stopped
+    environment:
+      ALLOWED_ORIGINS: ""
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-opus-5-5}
+    volumes:
+      - kkari-ai-logs:/app/data/intake_logs
+      - kkari-ai-consult-logs:/app/data/consult_logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/openapi.json', timeout=4).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 90s
+
   web:
     image: nginx:1.28-alpine
     restart: unless-stopped
@@ -76,6 +98,9 @@ services:
 
 volumes:
   kkari-postgres:
+  # 서버에 이미 있는 볼륨(kkari_kkari-ai-logs 등)을 그대로 쓴다. 이름을 바꾸면 기존 로그가 끊긴다.
+  kkari-ai-logs:
+  kkari-ai-consult-logs:
 
 # nginx 설정. 파일로 따로 두면 CD 가 올리는 파일 목록(compose.prod.yaml, deploy.sh)을 고쳐야 해서 여기에 넣었다.
 # compose 는 $ 를 변수로 읽으므로 nginx 변수는 $$ 로 적는다.
