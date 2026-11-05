@@ -415,7 +415,13 @@ class ChatControllerTest {
         "{\"reply\":\"질문\",\"ready\":false,\"recommend_request\":null}"
     })
     void 추천_요청이_없거나_JSON_null이면_SQL_NULL로_저장한다(String body) throws Exception {
-        when(aiServerClient.intake(any())).thenReturn(JsonMapper.shared().readValue(body, IntakeResponseDto.class));
+        IntakeResponseDto response = JsonMapper.shared().readValue(body, IntakeResponseDto.class);
+        if (JsonMapper.shared().readTree(body).has("recommend_request")) {
+            // JSON null 이 Java null 로 바뀌어 테스트를 우연히 통과하지 않게 한다
+            assertThat(response.recommendRequest()).isNotNull();
+            assertThat(response.recommendRequest().isNull()).isTrue();
+        }
+        when(aiServerClient.intake(any())).thenReturn(response);
 
         send("{}").andExpect(status().isOk());
 
