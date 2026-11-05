@@ -12,11 +12,12 @@ public record SendChatMessageResponseDto(
     List<String> missingFields,
     List<String> missing,
     Boolean ready,
-    IntakeProfileResponseDto profile
+    IntakeProfileResponseDto profile,
+    RequirementsDraftResponseDto requirementsDraft
 ) {
     public static SendChatMessageResponseDto from(ChatMessage user, ChatMessage assistant) {
         return new SendChatMessageResponseDto(user == null ? null : ChatMessageResponseDto.from(user),
             ChatMessageResponseDto.from(assistant), assistant.getMissingFields(), assistant.getMissing(), assistant.getReady(),
-            IntakeProfileResponseDto.from(assistant.getProfile()));
+            IntakeProfileResponseDto.from(assistant.getProfile()), RequirementsDraftResponseDto.from(assistant.getProfile()));
     }
 }
