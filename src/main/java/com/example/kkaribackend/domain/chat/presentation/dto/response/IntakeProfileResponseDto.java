@@ -24,7 +24,8 @@ public record IntakeProfileResponseDto(
     String changeTolerance,
     String constraints,
     String operations,
-    String security
+    String security,
+    String designPrinciples
 ) {
     // DB와 AI 원본은 snake_case로 보존하고, FE 응답의 식별자만 profile과 같은 이름으로 바꾼다.
     public static List<String> toProfileFieldNames(List<String> fields) {
@@ -55,6 +56,7 @@ public record IntakeProfileResponseDto(
         return new IntakeProfileResponseDto(profile.companyName(), profile.workload(), profile.architecture(),
             profile.traffic(), profile.availability(), profile.performance(), profile.cost(), profile.monthlyBudget(),
             profile.currency(), profile.containsPersonalData(), profile.frozenResources(), profile.goal(),
-            profile.priorities(), profile.changeTolerance(), profile.constraints(), profile.operations(), profile.security());
+            profile.priorities(), profile.changeTolerance(), profile.constraints(), profile.operations(), profile.security(),
+            profile.designPrinciples());
     }
 }
