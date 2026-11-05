@@ -1,6 +1,7 @@
 package com.example.kkaribackend.global.config;
 
 import com.example.kkaribackend.global.error.exception.KkariException;
+import com.example.kkaribackend.global.security.internal.InternalTokenAuthorizationManager;
 import com.example.kkaribackend.global.security.jwt.JwtFilter;
 import com.example.kkaribackend.global.security.jwt.JwtParser;
 import com.example.kkaribackend.global.security.jwt.exception.ForbiddenException;
@@ -24,6 +25,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     private final JwtParser jwtParser;
+    private final InternalTokenAuthorizationManager internalTokenAuthorizationManager;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -39,6 +41,7 @@ public class SecurityConfig {
                 .requestMatchers("/error").permitAll()
                 .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
                 .requestMatchers("/v1/auth/**").permitAll()
+                .requestMatchers("/v1/internal/**").access(internalTokenAuthorizationManager)
                 .anyRequest().authenticated()
             )
 

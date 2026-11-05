@@ -68,7 +68,7 @@ class AwsPricingCalculatorTest {
         Map<String, LinePrice> prices = calculator.price(lines);
 
         assertThat(prices).hasSize(26).allSatisfy((key, price) ->
-            assertThat(price).isEqualTo(new LinePrice(new BigDecimal("9.49"), null)));
+            assertThat(price).isEqualTo(LinePrice.priced(new BigDecimal("9.49"))));
         ArgumentCaptor<BatchCreateWorkloadEstimateUsageRequest> batches =
             ArgumentCaptor.forClass(BatchCreateWorkloadEstimateUsageRequest.class);
         verify(client, times(2)).batchCreateWorkloadEstimateUsage(batches.capture());
@@ -117,9 +117,9 @@ class AwsPricingCalculatorTest {
             new UsageLine("lost", "AmazonEC2", "APN2-BoxUsage:t3.small", "RunInstances", 730)));
 
         assertThat(prices).containsExactlyInAnyOrderEntriesOf(Map.of(
-            "ok", new LinePrice(new BigDecimal("16.43"), null),
+            "ok", LinePrice.priced(new BigDecimal("16.43")),
             "stale", LinePrice.failed("가격 계산 결과가 유효하지 않습니다: STALE"),
-            "bad", LinePrice.failed("가격 계산 실패: BAD_REQUEST"),
+            "bad", LinePrice.noMatchingPrice("가격 계산 실패: BAD_REQUEST"),
             "lost", LinePrice.failed("가격 계산 응답에 결과가 없습니다.")));
     }
 
@@ -136,7 +136,7 @@ class AwsPricingCalculatorTest {
 
         assertThat(prices.get("L0")).isEqualTo(LinePrice.failed("가격 계산 실패: ThrottlingException (HTTP 400)"));
         assertThat(prices.get("L24").monthlyUsd()).isNull();
-        assertThat(prices.get("L25")).isEqualTo(new LinePrice(new BigDecimal("1.00"), null));
+        assertThat(prices.get("L25")).isEqualTo(LinePrice.priced(new BigDecimal("1.00")));
         verify(client).deleteWorkloadEstimate(any(DeleteWorkloadEstimateRequest.class));
     }
 
@@ -162,7 +162,7 @@ class AwsPricingCalculatorTest {
         Map<String, LinePrice> prices = calculator.price(List.of(
             new UsageLine("L0", "AmazonEC2", "APN2-NatGateway-Hours", "NatGateway", 730)));
 
-        assertThat(prices).containsExactly(Map.entry("L0", new LinePrice(new BigDecimal("9.49"), null)));
+        assertThat(prices).containsExactly(Map.entry("L0", LinePrice.priced(new BigDecimal("9.49"))));
     }
 
     @Test

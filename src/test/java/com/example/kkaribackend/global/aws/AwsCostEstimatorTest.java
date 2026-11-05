@@ -25,7 +25,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AwsCostEstimatorTest {
@@ -39,13 +40,14 @@ class AwsCostEstimatorTest {
     @BeforeEach
     void setUp() {
         calculator = mock(AwsPricingCalculator.class);
+        when(calculator.isConfigured()).thenReturn(true);
         when(calculator.price(anyList())).thenAnswer(invocation -> {
             List<UsageLine> lines = invocation.getArgument(0);
             sentLines.addAll(lines);
             Map<String, LinePrice> prices = new HashMap<>();
             lines.forEach(line -> prices.put(line.key(), line.usageType().contains("unknown")
                 ? LinePrice.failed("가격 계산 실패: BAD_REQUEST")
-                : new LinePrice(PRICE, null)));
+                : LinePrice.priced(PRICE)));
             return prices;
         });
     }
@@ -186,7 +188,7 @@ class AwsCostEstimatorTest {
 
         assertThat(cost.monthlyUsdByResource()).isNull();
         assertThat(missing).containsExactly(new Missing("COST", "가격 계산을 지원하지 않는 리전입니다: eu-west-1"));
-        verifyNoInteractions(calculator);
+        verify(calculator, never()).price(anyList());
     }
 
     @Test
@@ -195,7 +197,9 @@ class AwsCostEstimatorTest {
             .ec2(List.of(new Ec2Instance("i-1", "t3.micro", "Linux/UNIX", "running", "ap-northeast-2a")))
             .build();
 
-        Cost cost = new AwsCostEstimator("ap-northeast-2", null).estimate(resources, missing);
+        when(calculator.isConfigured()).thenReturn(false);
+
+        Cost cost = estimator("ap-northeast-2").estimate(resources, missing);
 
         assertThat(cost.monthlyUsdByResource()).isNull();
         assertThat(cost.formulas()).containsKeys("EC2", "EBS", "RDS", "S3", "LAMBDA", "ELB", "NAT");

@@ -72,7 +72,7 @@ class AwsInfraCollectorTest {
         cloudWatch = client(CloudWatchClient.class);
         AwsInfraCollector.Clients clients = new AwsInfraCollector.Clients(ec2, rds, s3, lambda, elb, cloudWatch);
         // 가격 조회 미설정 상태
-        AwsCostEstimator costEstimator = new AwsCostEstimator("ap-northeast-2", null);
+        AwsCostEstimator costEstimator = new AwsCostEstimator("ap-northeast-2", mock(AwsPricingCalculator.class));
         collector = new AwsInfraCollector("ap-northeast-2", credentials -> clients, costEstimator);
 
         when(ec2.describeInstances(any(DescribeInstancesRequest.class))).thenReturn(DescribeInstancesResponse.builder()

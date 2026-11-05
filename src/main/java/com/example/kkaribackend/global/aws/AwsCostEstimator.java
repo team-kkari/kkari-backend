@@ -10,8 +10,6 @@ import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Missing;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.RdsInstance;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Resources;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.S3Bucket;
-import jakarta.annotation.PreDestroy;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -25,7 +23,6 @@ import java.util.Map;
 
 /**
  * 리소스를 AWS Pricing Calculator 사용량 줄로 바꿔 월 예상 비용(할인 전 정가)을 계산한다.
- * 가격 조회는 고객사 Role 도 서버 기본 자격증명도 아닌 별도 계정 키로 한다.
  */
 @Component
 public class AwsCostEstimator {
@@ -43,7 +40,7 @@ public class AwsCostEstimator {
         "Windows", "RunInstances:0002",
         "Red Hat Enterprise Linux", "RunInstances:0010",
         "SUSE Linux", "RunInstances:000g");
-    private static final Map<String, EbsUsage> EBS_USAGES = Map.of(
+    static final Map<String, EbsUsage> EBS_USAGES = Map.of(
         "gp2", new EbsUsage("EBS:VolumeUsage.gp2", "CreateVolume-Gp2"),
         "gp3", new EbsUsage("EBS:VolumeUsage.gp3", "CreateVolume-Gp3"),
         "io1", new EbsUsage("EBS:VolumeUsage.piops", "CreateVolume-P-IOPS"),
@@ -63,30 +60,15 @@ public class AwsCostEstimator {
         "gateway", "LoadBalancing:Gateway");
 
     private final String region;
-    private final AwsPricingCalculator calculator; // 키가 설정되지 않으면 null
+    private final AwsPricingCalculator calculator;
 
-    @Autowired
-    public AwsCostEstimator(@Value("${aws.region}") String region,
-                            @Value("${aws.pricing.access-key}") String accessKey,
-                            @Value("${aws.pricing.secret-key}") String secretKey) {
-        this(region, accessKey.isBlank() || secretKey.isBlank()
-            ? null : AwsPricingCalculator.create(accessKey, secretKey));
-    }
-
-    AwsCostEstimator(String region, AwsPricingCalculator calculator) {
+    AwsCostEstimator(@Value("${aws.region}") String region, AwsPricingCalculator calculator) {
         this.region = region;
         this.calculator = calculator;
     }
 
-    @PreDestroy
-    void close() {
-        if (calculator != null) {
-            calculator.close();
-        }
-    }
-
     public Cost estimate(Resources resources, List<Missing> missing) {
-        if (calculator == null) {
+        if (!calculator.isConfigured()) {
             missing.add(new Missing("COST", "가격 조회용 AWS 자격증명이 설정되지 않았습니다."));
             return cost(null);
         }
@@ -137,7 +119,7 @@ public class AwsCostEstimator {
         return new Cost("USD", "AWS_PRICING_CALCULATOR_BEFORE_DISCOUNTS", HOURS_PER_MONTH, FORMULAS, monthly);
     }
 
-    private record EbsUsage(String usageType, String operation) {
+    record EbsUsage(String usageType, String operation) {
     }
 
     private record PricedResource(String type, String id, UsageLine line) {
