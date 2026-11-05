@@ -18,6 +18,14 @@ class RequirementsDraftResponseDtoTest {
     }
 
     @Test
+    void 설계_원칙과_고려사항은_요구사항_내용에_담긴다() {
+        RequirementsDraftResponseDto draft = RequirementsDraftResponseDto.from(IntakeProfile.builder()
+            .goal("비용 절감").designPrinciples("Multi-AZ 필수, 관리형 서비스 우선").build());
+
+        assertThat(draft.content()).isEqualTo("목표: 비용 절감\n설계 원칙·고려사항: Multi-AZ 필수, 관리형 서비스 우선");
+    }
+
+    @Test
     void 우선순위는_명세의_4개만_순서대로_남긴다() {
         IntakeProfile profile = IntakeProfile.builder()
             .priorities(List.of("serverless", "security", "operations", "cost", "COST", "sustainability")).build();

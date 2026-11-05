@@ -26,6 +26,7 @@ public record IntakeProfile(
     @JsonProperty("change_tolerance") String changeTolerance,
     String constraints,
     String operations,
-    String security
+    String security,
+    @JsonProperty("design_principles") String designPrinciples
 ) {
 }
