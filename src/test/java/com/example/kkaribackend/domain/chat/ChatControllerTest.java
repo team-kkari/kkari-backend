@@ -15,6 +15,7 @@ import com.example.kkaribackend.domain.user.domain.Role;
 import com.example.kkaribackend.domain.user.domain.User;
 import com.example.kkaribackend.domain.user.domain.repository.UserRepository;
 import com.example.kkaribackend.global.ai.AiServerClient;
+import com.example.kkaribackend.global.ai.dto.AiMessage;
 import com.example.kkaribackend.global.ai.dto.IntakeProfile;
 import com.example.kkaribackend.global.ai.dto.IntakeRequestDto;
 import com.example.kkaribackend.global.ai.dto.IntakeResponseDto;
@@ -159,7 +160,7 @@ class ChatControllerTest {
         ArgumentCaptor<IntakeRequestDto> request = ArgumentCaptor.forClass(IntakeRequestDto.class);
         verify(aiServerClient, times(2)).intake(request.capture());
         assertThat(request.getValue().history()).containsExactly(
-            new IntakeRequestDto.Message("assistant", REPLY.reply()), new IntakeRequestDto.Message("user", "까리입니다"));
+            new AiMessage("assistant", REPLY.reply()), new AiMessage("user", "까리입니다"));
     }
 
     @Test
@@ -265,7 +266,8 @@ class ChatControllerTest {
         send("{\"content\":\"추가 답변\",\"clientMessageId\":\"failed\"}")
             .andExpect(status().is(error.getStatus().value()))
             .andExpect(jsonPath("$.code").value(error.getCode()))
-            .andExpect(jsonPath("$.retryable").value(error != AiErrorCode.AI_SERVER_ERROR));
+            .andExpect(jsonPath("$.retryable").value(
+                error == AiErrorCode.AI_SERVER_TIMEOUT || error == AiErrorCode.AI_SERVER_UNAVAILABLE));
 
         mockMvc.perform(get(url).with(owner)).andExpect(status().isOk())
             .andExpect(jsonPath("$.messages.length()").value(2))

@@ -12,6 +12,7 @@ import com.example.kkaribackend.domain.chat.presentation.dto.response.SendChatMe
 import com.example.kkaribackend.domain.project.domain.Project;
 import com.example.kkaribackend.domain.project.facade.ProjectFacade;
 import com.example.kkaribackend.global.ai.AiServerClient;
+import com.example.kkaribackend.global.ai.dto.AiMessage;
 import com.example.kkaribackend.global.ai.dto.IntakeRequestDto;
 import com.example.kkaribackend.global.ai.dto.IntakeResponseDto;
 import lombok.RequiredArgsConstructor;
@@ -84,7 +85,7 @@ public class SendChatMessageService {
 
         int responseSeq = user != null ? user.getSeq() + 1 : messages.isEmpty() ? 1 : messages.getLast().getSeq() + 1;
         IntakeResponseDto result = aiServerClient.intake(new IntakeRequestDto(messages.stream()
-            .map(m -> new IntakeRequestDto.Message(m.getRole().name().toLowerCase(Locale.ROOT), m.getContent())).toList(),
+            .map(m -> new AiMessage(m.getRole().name().toLowerCase(Locale.ROOT), m.getContent())).toList(),
             infraContext, "project-" + projectId, null));
         ChatMessage assistant;
         try {
