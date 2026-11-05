@@ -32,7 +32,7 @@ public class StartAnalysisService {
     // 이미 대기·실행 중인 분석이 있으면 새로 만들지 않고 그 작업을 돌려준다
     @Transactional
     public StartAnalysisResponse execute(Long projectId) {
-        Project project = projectFacade.getAssignedProject(projectId);
+        Project project = projectFacade.lockAssignedProject(projectId);
         if (project.getAwsConnectionStatus() != AwsConnectionStatus.CONNECTED) {
             throw new AwsNotConnectedException();
         }

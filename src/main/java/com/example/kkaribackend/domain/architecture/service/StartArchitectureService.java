@@ -37,7 +37,7 @@ public class StartArchitectureService {
     // 이미 대기·실행 중인 생성 작업이 있으면 새로 만들지 않고 그 작업을 돌려준다(요청한 개수가 달라도)
     @Transactional
     public StartArchitectureResponse execute(Long projectId, StartArchitectureRequest request) {
-        Project project = projectFacade.getAssignedProject(projectId);
+        Project project = projectFacade.lockAssignedProject(projectId);
         AnalysisJob latestAnalysis = analysisJobRepository
             .findFirstByProjectIdAndTypeAndStatusOrderByIdDesc(projectId, AnalysisJobType.ANALYSIS,
                 AnalysisStatus.SUCCEEDED)

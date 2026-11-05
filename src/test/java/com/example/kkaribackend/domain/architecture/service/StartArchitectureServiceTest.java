@@ -35,7 +35,7 @@ class StartArchitectureServiceTest {
         service = new StartArchitectureService(projectFacade, analysisJobRepository, eventPublisher,
             new ObjectMapper());
         project = Project.builder().id(1L).build();
-        when(projectFacade.getAssignedProject(1L)).thenReturn(project);
+        when(projectFacade.lockAssignedProject(1L)).thenReturn(project);
     }
 
     @Test
