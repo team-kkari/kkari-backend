@@ -21,7 +21,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class RunArchitectureServiceTest {
-    private static final ArchitectureRequest REQUEST = new ArchitectureRequest("[AWS]", "", List.of(), 5);
+    private static final ArchitectureRequest REQUEST = ArchitectureRequest.builder()
+        .infra("[AWS]").goal("").priorities(List.of()).count(5).build();
 
     private AiServerClient aiServerClient;
     private RunArchitectureService service;
