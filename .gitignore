@@ -47,3 +47,6 @@ out/
 *.tfvars
 crash.log
 *.pem
+
+### local-only instructions (contain account ids) ###
+CLAUDE.md
