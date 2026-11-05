@@ -57,6 +57,7 @@ import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -306,6 +307,41 @@ class ChatControllerTest {
     }
 
     @Test
+    void 상담_초안을_엔지니어가_그대로_요구사항으로_저장할_수_있다() throws Exception {
+        when(aiServerClient.intake(any())).thenReturn(REPLY.toBuilder().ready(true)
+            .profile(IntakeProfile.builder().companyName("까리").goal("비용 절감").workload("쇼핑몰")
+                .monthlyBudget(BigDecimal.ZERO).containsPersonalData(false).frozenResources(List.of())
+                .priorities(List.of("serverless", "operations", "cost", "reliability")).build()).build());
+
+        String body = send("{}").andExpect(status().isOk())
+            .andExpect(jsonPath("$.requirementsDraft.content").value("목표: 비용 절감\n워크로드: 쇼핑몰"))
+            .andExpect(jsonPath("$.requirementsDraft.priorities[0]").value("COST"))
+            .andExpect(jsonPath("$.requirementsDraft.priorities[1]").value("RELIABILITY"))
+            .andExpect(jsonPath("$.requirementsDraft.priorities.length()").value(2))
+            .andExpect(jsonPath("$.requirementsDraft.containsPersonalData").value(false))
+            .andReturn().getResponse().getContentAsString();
+        // 초안만 주고 확정은 엔지니어가 한다
+        assertThat(projectRepository.findById(project.getId()).orElseThrow().getRequirements()).isNull();
+        mockMvc.perform(get(url).with(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.requirementsDraft.priorities[0]").value("COST"));
+
+        String draft = JsonMapper.shared().readTree(body).get("requirementsDraft").toString();
+        mockMvc.perform(put("/v1/projects/" + project.getId() + "/requirements").with(owner)
+                .contentType(MediaType.APPLICATION_JSON).content(draft))
+            .andExpect(status().isOk());
+        Requirements saved = projectRepository.findById(project.getId()).orElseThrow().getRequirements();
+        assertThat(saved.priorities()).containsExactly(Priority.COST, Priority.RELIABILITY);
+        assertThat(saved.monthlyBudget()).isEqualByComparingTo("0");
+        assertThat(saved.frozenResources()).isEmpty();
+    }
+
+    @Test
+    void 상담_전에는_요구사항_초안이_없다() throws Exception {
+        mockMvc.perform(get(url).with(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.requirementsDraft").value(nullValue()));
+    }
+
+    @Test
     void 실패한_메시지_이후_다른_답변이_있으면_재전송을_거절한다() throws Exception {
         when(aiServerClient.intake(any())).thenThrow(new AiServerException(AiErrorCode.AI_SERVER_ERROR)).thenReturn(REPLY);
         String first = "{\"content\":\"첫 메시지\",\"clientMessageId\":\"A\"}";
@@ -415,7 +451,13 @@ class ChatControllerTest {
         "{\"reply\":\"질문\",\"ready\":false,\"recommend_request\":null}"
     })
     void 추천_요청이_없거나_JSON_null이면_SQL_NULL로_저장한다(String body) throws Exception {
-        when(aiServerClient.intake(any())).thenReturn(JsonMapper.shared().readValue(body, IntakeResponseDto.class));
+        IntakeResponseDto response = JsonMapper.shared().readValue(body, IntakeResponseDto.class);
+        if (JsonMapper.shared().readTree(body).has("recommend_request")) {
+            // JSON null 이 Java null 로 바뀌어 테스트를 우연히 통과하지 않게 한다
+            assertThat(response.recommendRequest()).isNotNull();
+            assertThat(response.recommendRequest().isNull()).isTrue();
+        }
+        when(aiServerClient.intake(any())).thenReturn(response);
 
         send("{}").andExpect(status().isOk());
 

@@ -2,10 +2,17 @@
 # 값은 같은 폴더의 .env 에서 읽는다 (서버에만 두고 git에 올리지 않는다). 형식은 .env.example 참고.
 #
 # - postgres 는 호스트 포트를 공개하지 않는다 (외부 포트가 전부 열려 있는 서버이므로).
-# - backend 만 8080 으로 공개한다.
+# - web(nginx)이 80 으로 프론트 정적 파일을 서빙하고 /v1/ 요청을 backend 로 넘긴다.
+# - backend 는 8080 으로도 직접 공개한다 (배포 확인용. 프론트 연동이 끝나면 닫아도 된다).
 # - AI 서버(kkari-AI)는 아직 컨테이너화 전이다. 준비되면 이 파일에 ai 서비스를 추가한다.
 #   AI 서버는 /v1/internal/** 을 공개 IP 가 아니라 이 compose 네트워크(http://backend:8080)로 불러야
 #   X-Internal-Token 이 평문으로 외부를 지나지 않는다.
+#
+# 프론트 배포 규칙
+# - 프론트 빌드 결과(dist 안의 파일)를 서버의 ~/kkari/frontend/ 에 올리면 바로 서빙된다. 컨테이너 재시작은 필요 없다.
+# - 프로덕션 빌드는 VITE_API_BASE_URL 을 비워서 같은 주소의 /v1/... 로 호출하게 한다 (CORS 가 필요 없다).
+# - 이 파일과 같은 compose 프로젝트(kkari)에 있어야 한다. 다른 파일로 따로 띄우면 deploy.sh 의
+#   --remove-orphans 때문에 백엔드를 배포할 때마다 지워질 수 있다.
 
 name: kkari
 
@@ -56,5 +63,74 @@ services:
       retries: 12
       start_period: 40s
 
+  web:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    # backend 가 없어도 기동한다 (proxy_pass 를 변수로 써서 요청 때 주소를 찾는다). 백엔드 배포와 묶이지 않게 depends_on 을 두지 않는다.
+    ports:
+      - "80:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+    configs:
+      - source: nginx_default
+        target: /etc/nginx/conf.d/default.conf
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 volumes:
   kkari-postgres:
+
+# nginx 설정. 파일로 따로 두면 CD 가 올리는 파일 목록(compose.prod.yaml, deploy.sh)을 고쳐야 해서 여기에 넣었다.
+# compose 는 $ 를 변수로 읽으므로 nginx 변수는 $$ 로 적는다.
+configs:
+  nginx_default:
+    content: |
+      server {
+        listen 80;
+        server_name _;
+        server_tokens off;
+
+        root /usr/share/nginx/html;
+
+        # Docker 내장 DNS. backend 컨테이너가 재생성돼 IP 가 바뀌어도 다시 찾는다.
+        resolver 127.0.0.11 valid=10s ipv6=off;
+
+        # 백엔드 업로드 한도(요청 6MB)보다 크게 둔다. nginx 기본값(1MB)이면 Terraform 파일 업로드가 여기서 막힌다.
+        client_max_body_size 10m;
+
+        gzip on;
+        gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+        location = /nginx-health {
+          access_log off;
+          default_type text/plain;
+          return 200 "ok";
+        }
+
+        # API 와 Swagger 는 백엔드로 넘긴다 (경로는 그대로).
+        location ~ ^/(v1/|v3/api-docs|swagger-ui) {
+          set $$backend http://backend:8080;
+          proxy_pass $$backend;
+          proxy_http_version 1.1;
+          proxy_set_header Host $$http_host;
+          proxy_set_header X-Real-IP $$remote_addr;
+          proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $$scheme;
+          proxy_read_timeout 120s;
+        }
+
+        # Vite 빌드 산출물(파일 이름에 해시가 붙음)은 오래 캐시한다.
+        location /assets/ {
+          add_header Cache-Control "public, max-age=31536000, immutable";
+          try_files $$uri =404;
+        }
+
+        # 그 외는 SPA 이다. 없는 경로는 index.html 로 보내고, index.html 은 캐시하지 않는다.
+        location / {
+          add_header Cache-Control "no-cache";
+          try_files $$uri /index.html;
+        }
+      }

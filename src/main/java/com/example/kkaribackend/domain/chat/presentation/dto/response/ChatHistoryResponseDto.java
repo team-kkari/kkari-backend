@@ -10,6 +10,7 @@ public record ChatHistoryResponseDto(
     List<String> missingFields,
     List<String> missing,
     Boolean ready,
-    IntakeProfileResponseDto profile
+    IntakeProfileResponseDto profile,
+    RequirementsDraftResponseDto requirementsDraft
 ) {
 }
