@@ -8,6 +8,7 @@ import com.example.kkaribackend.domain.user.domain.User;
 import com.example.kkaribackend.domain.user.domain.repository.UserRepository;
 import com.example.kkaribackend.global.security.auth.CustomUserDetails;
 import com.example.kkaribackend.global.terraform.TerraformStateParserTest;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +52,14 @@ class TerraformUploadTest {
     void setUp() {
         user = saveUser();
         project = projectRepository.save(Project.builder().user(user).companyName("고객사").contactName("담당").build());
+    }
+
+    // 작업이 프로젝트를, 프로젝트가 유저를 참조하므로 이 순서로 지운다
+    @AfterEach
+    void tearDown() {
+        analysisJobRepository.deleteAll();
+        projectRepository.deleteAll();
+        userRepository.deleteAll();
     }
 
     @Test
