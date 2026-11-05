@@ -27,7 +27,7 @@ public class ProjectFacade {
         return project;
     }
 
-    // 분석 스레드가 들고 있던 프로젝트를 save 하면 그사이 바뀐 요구사항 등을 덮어쓰므로 새로 읽어서 바꾼다
+    // 분석 스레드가 들고 있던 Project 를 save 하면 분석 중에 바뀐 요구사항을 덮어쓴다
     @Transactional
     public void markAnalyzed(Long projectId) {
         projectRepository.findById(projectId)

@@ -96,10 +96,9 @@ public class Project {
         advanceTo(ProjectStage.RECOMMENDED);
     }
 
-    // 재분석 등으로 다시 호출돼도 단계는 뒤로 가지 않는다
-    private void advanceTo(ProjectStage stage) {
-        if (stage.compareTo(this.stage) > 0) {
-            this.stage = stage;
+    private void advanceTo(ProjectStage nextStage) {
+        if (nextStage.isAfter(this.stage)) {
+            this.stage = nextStage;
         }
     }
 }

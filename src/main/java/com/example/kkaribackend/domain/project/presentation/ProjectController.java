@@ -30,7 +30,7 @@ public class ProjectController {
         return createProjectService.execute(request);
     }
 
-    @Operation(summary = "내 프로젝트 목록", description = "진행 단계(RECEIVED 정보 입력, ANALYZED 분석 완료, RECOMMENDED 추천 완료)로 필터, 최근 수정 순.")
+    @Operation(summary = "내 프로젝트 목록", description = "진행 단계로 필터, 최근 수정 순.")
     @GetMapping
     public List<ProjectListResponse> list(@RequestParam(required = false) ProjectStage stage) {
         return queryProjectListService.execute(stage);
