@@ -27,6 +27,7 @@ import java.time.ZoneId;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -93,6 +94,32 @@ class ProjectPresentationTest {
         assertThat(item(list, project.getId()).get("serviceName").isNull()).isTrue();
         assertThat(OffsetDateTime.parse(item(list, project.getId()).get("createdAt").asString()).toInstant())
             .isEqualTo(project.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant());
+    }
+
+    @Test
+    void 의뢰를_만들_때_인프라_상태를_저장하고_생략하면_EXISTING이다() throws Exception {
+        long noneId = createdProjectId("{\"companyName\":\"신규 회사\",\"contactName\":\"담당\",\"infraStatus\":\"NONE\"}");
+        long defaultId = createdProjectId("{\"companyName\":\"기본 회사\",\"contactName\":\"담당\"}");
+
+        mockMvc.perform(get("/v1/projects/" + noneId).with(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.infraStatus").value("NONE"));
+        mockMvc.perform(get("/v1/projects/" + defaultId).with(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.infraStatus").value("EXISTING"));
+        JsonNode list = objectMapper.readTree(mockMvc.perform(get("/v1/projects").with(owner)).andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+        assertThat(item(list, noneId).get("infraStatus").asString()).isEqualTo("NONE");
+        assertThat(item(list, defaultId).get("infraStatus").asString()).isEqualTo("EXISTING");
+        // 값이 없던 기존 프로젝트도 EXISTING 으로 보인다
+        assertThat(item(list, project.getId()).get("infraStatus").asString()).isEqualTo("EXISTING");
+        mockMvc.perform(post("/v1/projects").with(owner).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+            .content("{\"companyName\":\"x\",\"contactName\":\"y\",\"infraStatus\":\"MAYBE\"}"))
+            .andExpect(status().is4xxClientError());
+    }
+
+    private long createdProjectId(String body) throws Exception {
+        return objectMapper.readTree(mockMvc.perform(post("/v1/projects").with(owner)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().is2xxSuccessful()).andReturn().getResponse().getContentAsString()).get("projectId").asLong();
     }
 
     @Test

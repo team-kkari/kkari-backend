@@ -58,7 +58,7 @@ class AiServerClientTest {
 
     private static final ArchitectureRequest ARCHITECTURE_REQUEST = ArchitectureRequest.builder()
         .infra("EC2 i-1: t3.micro").goal("").priorities(List.of("cost")).count(3).build();
-    private static final IntakeRequestDto INTAKE_REQUEST = new IntakeRequestDto(List.of(), "", "project-1", null);
+    private static final IntakeRequestDto INTAKE_REQUEST = new IntakeRequestDto(List.of(), "", "project-1", null, null);
     private static final TerraformRequest TERRAFORM_REQUEST = TerraformRequest.builder()
         .name("serverless").diagram(json("{\"nodes\":[]}")).build();
     private static final String ERROR_BODY = "{\"code\":\"%s\",\"message\":\"%s\",\"retryable\":%s}";
@@ -210,11 +210,11 @@ class AiServerClientTest {
              "recommend_request":{"infra":"EC2","constraints":{"monthly_budget":0}},"extra":true}""");
 
         IntakeResponseDto response = client.intake(new IntakeRequestDto(
-            List.of(new AiMessage("user", "안녕")), "EC2 1대", "project-12", List.of("company_name")));
+            List.of(new AiMessage("user", "안녕")), "EC2 1대", "project-12", List.of("company_name"), "NONE"));
 
         assertThat(json(requests.getFirst().body())).isEqualTo(json("""
             {"history":[{"role":"user","content":"안녕"}],"infra_context":"EC2 1대","session_id":"project-12",
-             "required_fields":["company_name"]}"""));
+             "required_fields":["company_name"],"infra_status":"NONE"}"""));
         assertThat(response.reply()).isEqualTo("질문");
         assertThat(response.profile().companyName()).isEqualTo("고객사");
         assertThat(response.profile().monthlyBudget()).isEqualByComparingTo("3000000.0");
@@ -245,11 +245,11 @@ class AiServerClientTest {
 
     @Test
     @ExtendWith(OutputCaptureExtension.class)
-    void 응답_파싱_실패는_AI_SERVER_ERROR이며_응답_원문을_로그에_남기지_않는다(CapturedOutput output) {
+    void 응답_파싱_실패는_AI_SERVER_ERROR이며_응답_원문은_AI_CALL_로그에만_남긴다(CapturedOutput output) {
         replyJson(200, "{\"reply\":PRIVATE_AI_RESPONSE}");
 
         assertError(() -> client.intake(INTAKE_REQUEST), AiErrorCode.AI_SERVER_ERROR);
-        assertThat(output.getAll()).doesNotContain("PRIVATE_AI_RESPONSE");
+        assertThat(otherLogs(output)).doesNotContain("PRIVATE_AI_RESPONSE");
     }
 
     @Test
@@ -343,7 +343,8 @@ class AiServerClientTest {
     }
 
     @Test
-    void chat은_NDJSON을_모으지_않고_한_줄씩_넘긴다() {
+    @ExtendWith(OutputCaptureExtension.class)
+    void chat은_NDJSON을_모으지_않고_한_줄씩_넘기고_끝날_때_요약_한_줄만_남긴다(CapturedOutput output) {
         CountDownLatch firstEventReceived = new CountDownLatch(1);
         AtomicBoolean streamed = new AtomicBoolean();
         List<ChatEvent> events = new ArrayList<>();
@@ -371,6 +372,25 @@ class AiServerClientTest {
         assertThat(events.subList(1, 4)).containsExactly(new ChatEvent.Delta("NAT "),
             new ChatEvent.Delta("줄이기 [1]"), new ChatEvent.Done(false));
         assertThat(json(requests.getFirst().body())).isEqualTo(json("{\"question\":\"NAT 비용\",\"history\":[]}"));
+        assertThat(aiCallLogs(output)).hasSize(3);
+        assertThat(aiCallLog(output, "ai_call POST /chat")).contains("attempt=1/3", "status=200", "response=stream",
+            "request={\"question\":\"NAT 비용\",\"history\":[]}").doesNotContain("delta");
+        assertThat(aiCallLog(output, "ai_chat_summary"))
+            .contains("sources=1", "refused=false", "error=null", "answer=NAT 줄이기 [1]");
+        assertThat(aiCallLog(output, "ai_call_end")).contains("POST /chat", "attempts=1/3", "result=OK");
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void chat_스트림_도중_오류는_요약에_코드와_retryable을_남긴다(CapturedOutput output) {
+        replyStream("{\"type\":\"sources\",\"sources\":[]}", "{\"type\":\"delta\",\"text\":\"일부\"}",
+            "{\"type\":\"error\",\"code\":\"UPSTREAM_UNAVAILABLE\",\"message\":\"잠시 후\",\"retryable\":true}");
+
+        client.chat(ChatRequest.builder().question("q").build(), event -> {
+        });
+
+        assertThat(aiCallLog(output, "ai_chat_summary"))
+            .contains("sources=0", "error=UPSTREAM_UNAVAILABLE(retryable=true)", "answer=일부");
     }
 
     @Test
@@ -520,14 +540,14 @@ class AiServerClientTest {
 
     @Test
     @ExtendWith(OutputCaptureExtension.class)
-    void 파일_분석의_INVALID_REQUEST는_AI_문구를_고객에게_보여주되_로그에는_남기지_않는다(CapturedOutput output) {
+    void 파일_분석의_INVALID_REQUEST는_AI_문구를_고객에게_보여주되_AI_CALL_밖_로그에는_남기지_않는다(CapturedOutput output) {
         replyJson(400, ERROR_BODY.formatted("INVALID_REQUEST", "분석할 수 있는 파일이 없습니다: 고객파일.xlsx", false));
 
         assertThatThrownBy(() -> client.consultFiles(List.of()))
             .isInstanceOf(AiServerException.class)
             .hasMessage("분석할 수 있는 파일이 없습니다: 고객파일.xlsx")
             .extracting("errorCode").isEqualTo(AiErrorCode.AI_INVALID_REQUEST);
-        assertThat(output.getAll()).doesNotContain("고객파일");
+        assertThat(otherLogs(output)).doesNotContain("고객파일");
     }
 
     @Test
@@ -556,6 +576,97 @@ class AiServerClientTest {
         server.stop(0);
 
         assertError(() -> client.intake(INTAKE_REQUEST), AiErrorCode.AI_SERVER_UNAVAILABLE);
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void AI_CALL_로그는_본문_전체와_상태_시간_session_id를_남기고_헤더는_남기지_않는다(CapturedOutput output) {
+        replyJson(200, "{\"reply\":\"안녕하세요\",\"missing_fields\":[],\"ready\":false}");
+
+        client.intake(INTAKE_REQUEST);
+
+        assertThat(aiCallLog(output, "ai_call POST /intake")).contains("attempt=1/3", "session_id=project-1",
+            "request_bytes=58 request={\"history\":[],\"infra_context\":\"\",\"session_id\":\"project-1\"}",
+            "status=200", "duration_ms=", "response={\"reply\":\"안녕하세요\",\"missing_fields\":[],\"ready\":false}")
+            .containsPattern("response_bytes=\\d+").doesNotContain("Content-Type");
+        assertThat(aiCallLog(output, "ai_call_end")).contains("POST /intake", "attempts=1/3", "result=OK");
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void AI_CALL_로그는_재시도마다_시도_번호와_AI_오류_코드를_남긴다(CapturedOutput output) {
+        replyJson(503, ERROR_BODY.formatted("UPSTREAM_UNAVAILABLE", "잠시 후", true));
+        replyJson(422, ERROR_BODY.formatted("REFUSED", "거절", false));
+
+        assertError(() -> client.architectures(ARCHITECTURE_REQUEST), AiErrorCode.AI_REQUEST_REFUSED);
+
+        List<String> logs = aiCallLogs(output);
+        assertThat(logs).hasSize(3);
+        assertThat(logs.get(0)).contains("ai_call POST /architectures attempt=1/3", "status=503",
+            "ai_code=UPSTREAM_UNAVAILABLE retryable=true");
+        assertThat(logs.get(1)).contains("ai_call POST /architectures attempt=2/3", "status=422",
+            "ai_code=REFUSED retryable=false", "response={\"code\":\"REFUSED\",\"message\":\"거절\"");
+        assertThat(logs.get(2)).contains("ai_call_end POST /architectures attempts=2/3", "result=AI004");
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void AI_CALL_로그는_업로드_파일의_이름과_크기만_남긴다(CapturedOutput output) {
+        replyJson(200, "{\"file_analysis\":{}}");
+
+        client.consultFiles(List.of(
+            new MockMultipartFile("upload", "main.tf", "text/plain", "resource {}".getBytes()),
+            new MockMultipartFile("upload", "cost.csv", "text/csv", "a,b".getBytes())));
+
+        assertThat(aiCallLog(output, "ai_call POST /consult/files"))
+            .contains("request_files=[main.tf(11B), cost.csv(3B)]", "response={\"file_analysis\":{}}")
+            .doesNotContain("resource {}", "request=");
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void AI_CALL_로그는_terraform_파일의_내용_대신_이름_종류_크기를_남긴다(CapturedOutput output) {
+        reply(200, Map.of("Content-Type", "application/zip",
+            "Content-Disposition", "attachment; filename=\"serverless-terraform.zip\""),
+            "PK-ZIP-CONTENT".getBytes(StandardCharsets.UTF_8));
+
+        client.terraformFile(TERRAFORM_REQUEST, TerraformFormat.ZIP);
+
+        assertThat(aiCallLog(output, "ai_call POST /terraform"))
+            .contains("\"format\":\"zip\"", "response_bytes=14", "response_file=serverless-terraform.zip",
+                "response_type=application/zip")
+            .doesNotContain("PK-ZIP-CONTENT");
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void AI_CALL_로그가_본문을_읽다_끊겨도_오류_분류는_그대로이다(CapturedOutput output) {
+        Duration limit = Duration.ofMillis(300);
+        AiServerClient slowClient = client(new AiServerClient.Timeouts(limit, limit, limit, limit, limit));
+        replies.add(new Reply(200, Map.of("Content-Type", "application/json"), Duration.ZERO,
+            List.of(line("{\"architectures\":"), line("[]}")), index -> {
+                if (index == 1) {
+                    sleep(1_000);
+                }
+            }));
+
+        assertError(() -> slowClient.architectures(ARCHITECTURE_REQUEST), AiErrorCode.AI_SERVER_ERROR);
+        assertThat(aiCallLog(output, "ai_call POST /architectures")).contains("status=200", "error=IOException");
+        assertThat(requests).hasSize(1);
+    }
+
+    private static List<String> aiCallLogs(CapturedOutput output) {
+        return output.getAll().lines().filter(line -> line.contains(" AI_CALL ")).toList();
+    }
+
+    private static String aiCallLog(CapturedOutput output, String marker) {
+        List<String> logs = aiCallLogs(output).stream().filter(line -> line.contains(marker)).toList();
+        assertThat(logs).hasSize(1);
+        return logs.getFirst();
+    }
+
+    private static String otherLogs(CapturedOutput output) {
+        return String.join("\n", output.getAll().lines().filter(line -> !line.contains(" AI_CALL ")).toList());
     }
 
     private AiServerClient client(AiServerClient.Timeouts timeouts) {

@@ -7,6 +7,7 @@ import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRep
 import com.example.kkaribackend.domain.architecture.exception.AnalysisNotCompletedException;
 import com.example.kkaribackend.domain.architecture.presentation.dto.request.StartArchitectureRequest;
 import com.example.kkaribackend.domain.architecture.presentation.dto.response.StartArchitectureResponse;
+import com.example.kkaribackend.domain.project.domain.InfraStatus;
 import com.example.kkaribackend.domain.project.domain.Project;
 import com.example.kkaribackend.domain.project.facade.ProjectFacade;
 import com.example.kkaribackend.global.ai.dto.ArchitectureRequest;
@@ -38,10 +39,13 @@ public class StartArchitectureService {
     @Transactional
     public StartArchitectureResponse execute(Long projectId, StartArchitectureRequest request) {
         Project project = projectFacade.lockAssignedProject(projectId);
-        AnalysisJob latestAnalysis = analysisJobRepository
+        // 인프라가 아직 없는 신규 구축은 분석할 AWS 계정이 없으므로 분석 없이 상담 내용으로 설계한다
+        Optional<AnalysisJob> latestAnalysis = analysisJobRepository
             .findFirstByProjectIdAndTypeAndStatusOrderByIdDesc(projectId, AnalysisJobType.ANALYSIS,
-                AnalysisStatus.SUCCEEDED)
-            .orElseThrow(AnalysisNotCompletedException::new);
+                AnalysisStatus.SUCCEEDED);
+        if (latestAnalysis.isEmpty() && project.getInfraStatus() != InfraStatus.NONE) {
+            throw new AnalysisNotCompletedException();
+        }
 
         Optional<AnalysisJob> inProgress = analysisJobRepository
             .findFirstByProjectIdAndTypeAndStatusInOrderByIdDesc(projectId, AnalysisJobType.ARCHITECTURE,
@@ -51,7 +55,8 @@ public class StartArchitectureService {
         }
         inProgress.ifPresent(staleJob -> staleJob.fail(STALE_FAILURE_REASON));
 
-        InfraSnapshot snapshot = objectMapper.readValue(latestAnalysis.getResult(), InfraSnapshot.class);
+        InfraSnapshot snapshot = latestAnalysis.isEmpty() ? null
+            : objectMapper.readValue(latestAnalysis.get().getResult(), InfraSnapshot.class);
         ArchitectureRequest input = ArchitectureInputFactory.create(snapshot, project.getTerraform(),
             project.getRequirements(), project.getAnswers(), requestedCount(request));
 

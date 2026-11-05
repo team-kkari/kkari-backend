@@ -149,6 +149,20 @@ class ChatControllerTest {
     }
 
     @Test
+    void 프로젝트의_인프라_상태를_AI에_전달하고_없으면_보내지_않는다() throws Exception {
+        send("{}").andExpect(status().isOk());
+        Project fresh = projectRepository.save(Project.builder().user(project.getUser()).companyName("신규").contactName("담당자")
+            .infraStatus(com.example.kkaribackend.domain.project.domain.InfraStatus.NONE).build());
+        mockMvc.perform(post("/v1/projects/" + fresh.getId() + "/chat/messages").with(owner)
+            .contentType(MediaType.APPLICATION_JSON).content("{}")).andExpect(status().isOk());
+
+        ArgumentCaptor<IntakeRequestDto> request = ArgumentCaptor.forClass(IntakeRequestDto.class);
+        verify(aiServerClient, times(2)).intake(request.capture());
+        assertThat(request.getAllValues().get(0).infraStatus()).isNull();
+        assertThat(request.getAllValues().get(1).infraStatus()).isEqualTo("NONE");
+    }
+
+    @Test
     void 전송하면_전체_대화를_보내고_사용자와_AI_순서로_저장한다() throws Exception {
         send("{}").andExpect(status().isOk());
         send("{\"content\":\"까리입니다\",\"clientMessageId\":\"m1\"}")
