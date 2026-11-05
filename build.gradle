@@ -36,7 +36,7 @@ dependencies {
     implementation 'software.amazon.awssdk:lambda'
     implementation 'software.amazon.awssdk:elasticloadbalancingv2'
     implementation 'software.amazon.awssdk:cloudwatch'
-    implementation 'software.amazon.awssdk:pricing'
+    implementation 'software.amazon.awssdk:bcmpricingcalculator'
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
