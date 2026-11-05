@@ -6,6 +6,7 @@ import com.example.kkaribackend.domain.analysis.presentation.dto.response.Analys
 import com.example.kkaribackend.domain.analysis.presentation.dto.response.DiscoveryResponse;
 import com.example.kkaribackend.domain.project.domain.AwsConnectionStatus;
 import com.example.kkaribackend.domain.project.domain.Project;
+import com.example.kkaribackend.domain.project.domain.ProjectStage;
 import com.example.kkaribackend.domain.project.domain.repository.ProjectRepository;
 import com.example.kkaribackend.domain.user.domain.Role;
 import com.example.kkaribackend.domain.user.domain.User;
@@ -86,5 +87,7 @@ class AnalysisFlowTest {
         DiscoveryResponse discovery = queryDiscoveryService.execute(project.getId());
         assertThat(discovery.jobId()).isEqualTo(jobId);
         assertThat(discovery.result().resources().ec2()).hasSize(1);
+        assertThat(projectRepository.findById(project.getId()).orElseThrow().getStage())
+            .isEqualTo(ProjectStage.ANALYZED);
     }
 }

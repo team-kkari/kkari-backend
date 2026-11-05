@@ -7,6 +7,7 @@ import com.example.kkaribackend.domain.project.exception.ProjectNotFoundExceptio
 import com.example.kkaribackend.domain.user.facade.UserFacade;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 @Component
 @RequiredArgsConstructor
@@ -24,5 +25,13 @@ public class ProjectFacade {
             throw new NotAssignedProjectException();
         }
         return project;
+    }
+
+    // 분석 스레드가 들고 있던 프로젝트를 save 하면 그사이 바뀐 요구사항 등을 덮어쓰므로 새로 읽어서 바꾼다
+    @Transactional
+    public void markAnalyzed(Long projectId) {
+        projectRepository.findById(projectId)
+            .orElseThrow(ProjectNotFoundException::new)
+            .markAnalyzed();
     }
 }

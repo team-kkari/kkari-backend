@@ -5,8 +5,10 @@ import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStep;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
 import com.example.kkaribackend.domain.project.domain.Project;
+import com.example.kkaribackend.domain.project.facade.ProjectFacade;
 import com.example.kkaribackend.global.aws.AwsConnectionProvider;
 import com.example.kkaribackend.global.aws.AwsInfraCollector;
+import com.example.kkaribackend.global.aws.dto.InfraSnapshot;
 import com.example.kkaribackend.global.aws.exception.AwsErrorCode;
 import com.example.kkaribackend.global.aws.exception.AwsException;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,6 +32,7 @@ class RunAnalysisServiceTest {
     private AwsInfraCollector awsInfraCollector;
     private RunAnalysisService service;
     private AnalysisJobRepository analysisJobRepository;
+    private ProjectFacade projectFacade;
     private AnalysisJob job;
 
     @BeforeEach
@@ -37,12 +40,23 @@ class RunAnalysisServiceTest {
         analysisJobRepository = mock(AnalysisJobRepository.class);
         awsConnectionProvider = mock(AwsConnectionProvider.class);
         awsInfraCollector = mock(AwsInfraCollector.class);
+        projectFacade = mock(ProjectFacade.class);
         service = new RunAnalysisService(analysisJobRepository, awsConnectionProvider, awsInfraCollector,
-            new ObjectMapper());
+            new ObjectMapper(), projectFacade);
 
         Project project = Project.builder().id(1L).roleArn("arn:aws:iam::123456789012:role/kkari").build();
         job = AnalysisJob.builder().id(10L).project(project).build();
         when(analysisJobRepository.findWithProjectById(10L)).thenReturn(Optional.of(job));
+    }
+
+    @Test
+    void 성공하면_프로젝트를_분석_완료로_바꾼다() {
+        when(awsInfraCollector.collect(any(), any())).thenReturn(InfraSnapshot.builder().build());
+
+        service.execute(new AnalysisRequestedEvent(10L));
+
+        assertThat(job.getStatus()).isEqualTo(AnalysisStatus.SUCCEEDED);
+        verify(projectFacade).markAnalyzed(1L);
     }
 
     @Test
@@ -81,5 +95,6 @@ class RunAnalysisServiceTest {
         assertThat(job.getStatus()).isEqualTo(AnalysisStatus.FAILED);
         assertThat(job.getFailureReason()).isEqualTo("AWS 요청에 실패했습니다.");
         assertThat(job.getResult()).isNull();
+        verifyNoInteractions(projectFacade);
     }
 }

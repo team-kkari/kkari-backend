@@ -37,10 +37,6 @@ public class Project {
     @Column(length = 50, nullable = false)
     private String contactName;
 
-    // 의뢰 내용 메모
-    @Column(length = 1000)
-    private String memo;
-
     @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(length = 20, nullable = false)
@@ -90,5 +86,20 @@ public class Project {
 
     public void updateTerraform(TerraformInfra terraform) {
         this.terraform = terraform;
+    }
+
+    public void markAnalyzed() {
+        advanceTo(ProjectStage.ANALYZED);
+    }
+
+    public void markRecommended() {
+        advanceTo(ProjectStage.RECOMMENDED);
+    }
+
+    // 재분석 등으로 다시 호출돼도 단계는 뒤로 가지 않는다
+    private void advanceTo(ProjectStage stage) {
+        if (stage.compareTo(this.stage) > 0) {
+            this.stage = stage;
+        }
     }
 }

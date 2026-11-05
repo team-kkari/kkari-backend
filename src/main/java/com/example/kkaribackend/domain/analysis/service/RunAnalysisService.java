@@ -4,6 +4,7 @@ import com.example.kkaribackend.domain.analysis.domain.AnalysisJob;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
 import com.example.kkaribackend.domain.project.domain.Project;
+import com.example.kkaribackend.domain.project.facade.ProjectFacade;
 import com.example.kkaribackend.global.aws.AwsConnectionProvider;
 import com.example.kkaribackend.global.aws.AwsInfraCollector;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot;
@@ -28,6 +29,7 @@ public class RunAnalysisService {
     private final AwsConnectionProvider awsConnectionProvider;
     private final AwsInfraCollector awsInfraCollector;
     private final ObjectMapper objectMapper;
+    private final ProjectFacade projectFacade;
 
     @Async
     @TransactionalEventListener
@@ -49,6 +51,7 @@ public class RunAnalysisService {
                 analysisJobRepository.save(job);
             });
             job.succeed(objectMapper.writeValueAsString(snapshot));
+            projectFacade.markAnalyzed(project.getId());
         } catch (AwsException e) {
             job.fail(e.getMessage());
         } catch (RuntimeException e) {

@@ -23,14 +23,14 @@ public class ProjectController {
     private final CreateProjectService createProjectService;
     private final QueryProjectListService queryProjectListService;
 
-    @Operation(summary = "프로젝트 생성", description = "만든 엔지니어가 담당하고, 진행 단계는 RECEIVED(의뢰 접수)로 시작한다.")
+    @Operation(summary = "프로젝트 생성", description = "만든 엔지니어가 담당하고, 진행 단계는 RECEIVED(정보 입력)로 시작한다.")
     @ResponseStatus(HttpStatus.CREATED)
     @PostMapping
     public CreateProjectResponse create(@Valid @RequestBody CreateProjectRequest request) {
         return createProjectService.execute(request);
     }
 
-    @Operation(summary = "내 프로젝트 목록", description = "진행 단계로 필터, 최근 수정 순.")
+    @Operation(summary = "내 프로젝트 목록", description = "진행 단계(RECEIVED 정보 입력, ANALYZED 분석 완료, RECOMMENDED 추천 완료)로 필터, 최근 수정 순.")
     @GetMapping
     public List<ProjectListResponse> list(@RequestParam(required = false) ProjectStage stage) {
         return queryProjectListService.execute(stage);
