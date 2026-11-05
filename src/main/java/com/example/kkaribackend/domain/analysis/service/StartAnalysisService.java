@@ -1,6 +1,7 @@
 package com.example.kkaribackend.domain.analysis.service;
 
 import com.example.kkaribackend.domain.analysis.domain.AnalysisJob;
+import com.example.kkaribackend.domain.analysis.domain.AnalysisJobType;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
 import com.example.kkaribackend.domain.analysis.exception.AwsNotConnectedException;
@@ -37,7 +38,8 @@ public class StartAnalysisService {
         }
 
         Optional<AnalysisJob> inProgress = analysisJobRepository
-            .findFirstByProjectIdAndStatusInOrderByIdDesc(projectId, AnalysisStatus.IN_PROGRESS);
+            .findFirstByProjectIdAndTypeAndStatusInOrderByIdDesc(projectId, AnalysisJobType.ANALYSIS,
+                AnalysisStatus.IN_PROGRESS);
         if (inProgress.isPresent()) {
             AnalysisJob job = inProgress.get();
             if (job.getCreatedAt().isAfter(LocalDateTime.now().minus(STALE_AFTER))) {

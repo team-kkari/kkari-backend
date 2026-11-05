@@ -9,7 +9,8 @@ import org.springframework.http.HttpStatus;
 @AllArgsConstructor
 public enum AiErrorCode implements ErrorProperty {
     AI_SERVER_ERROR(HttpStatus.BAD_GATEWAY, "AI001", "AI 서버 요청에 실패했습니다."),
-    AI_SERVER_TIMEOUT(HttpStatus.GATEWAY_TIMEOUT, "AI002", "AI 서버 응답 시간이 초과되었습니다.");
+    AI_SERVER_TIMEOUT(HttpStatus.GATEWAY_TIMEOUT, "AI002", "AI 서버 응답 시간이 초과되었습니다."),
+    AI_SERVER_BUSY(HttpStatus.SERVICE_UNAVAILABLE, "AI003", "AI 서버가 바쁩니다. 잠시 후 다시 시도해주세요.");
 
     private final HttpStatus status;
     private final String code;

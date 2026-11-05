@@ -1,14 +1,15 @@
 package com.example.kkaribackend.global.ai;
 
-import com.example.kkaribackend.global.ai.dto.RecommendRequest;
-import com.example.kkaribackend.global.ai.dto.RecommendResponse;
+import com.example.kkaribackend.global.ai.dto.ArchitectureRequest;
 import com.example.kkaribackend.global.ai.exception.AiErrorCode;
 import com.example.kkaribackend.global.ai.exception.AiServerException;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.test.json.JsonCompareMode;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
@@ -23,14 +24,16 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 class AiServerClientTest {
 
-    private static final RecommendRequest REQUEST = RecommendRequest.builder()
-        .infra("EC2 1대")
+    private static final ArchitectureRequest REQUEST = ArchitectureRequest.builder()
+        .infra("EC2 i-1: t3.micro")
         .goal("")
         .priorities(List.of("cost"))
+        .count(3)
         .build();
 
     private MockRestServiceServer server;
@@ -44,40 +47,55 @@ class AiServerClientTest {
     }
 
     @Test
-    void recommend_성공시_solution과_sources를_파싱한다() {
-        server.expect(requestTo("http://ai/recommend"))
+    void architectures_성공시_응답_본문을_그대로_돌려준다() {
+        String body = """
+            {"overall":"요약", "architectures":[{"rank":1,"name":"서버리스","cost":{"monthly_total_usd":12.5}}],
+             "failed":[], "timings_s":{"total":90.1}}""";
+        server.expect(requestTo("http://ai/architectures"))
             .andExpect(method(POST))
             .andExpect(content().json("""
-                {"infra":"EC2 1대","goal":"","priorities":["cost"]}
-                """))
-            .andRespond(withSuccess("""
-                {"solution":{"summary":"요약","items":[1,2]},
-                 "sources":[{"n":1,"title":"t","bp_id":null,"category":"c","service":"EC2","url":"u","extra":1}],
-                 "extra":true}
-                """, MediaType.APPLICATION_JSON));
+                {"infra":"EC2 i-1: t3.micro","goal":"","priorities":["cost"],"count":3}
+                """, JsonCompareMode.STRICT))
+            .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
 
-        RecommendResponse response = client.recommend(REQUEST);
-
-        assertThat(response.solution().get("summary").asString()).isEqualTo("요약");
-        assertThat(response.sources()).containsExactly(
-            new RecommendResponse.Source(1, "t", null, "c", "EC2", "u"));
+        assertThat(client.architectures(REQUEST)).isEqualTo(body);
         server.verify();
     }
 
     @Test
-    void recommend_5xx면_AI_SERVER_ERROR() {
-        server.expect(requestTo("http://ai/recommend"))
-            .andRespond(withServerError().body("{\"detail\":\"LLM failed\"}"));
+    void architectures_429면_AI_SERVER_BUSY() {
+        server.expect(requestTo("http://ai/architectures"))
+            .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS).body("{\"detail\":\"rate limited\"}"));
 
-        assertThatThrownBy(() -> client.recommend(REQUEST))
+        assertThatThrownBy(() -> client.architectures(REQUEST))
+            .isInstanceOf(AiServerException.class)
+            .extracting("errorCode").isEqualTo(AiErrorCode.AI_SERVER_BUSY);
+    }
+
+    @Test
+    void architectures_5xx면_AI_SERVER_ERROR() {
+        server.expect(requestTo("http://ai/architectures"))
+            .andRespond(withServerError().body("{\"detail\":\"generation failed\"}"));
+
+        assertThatThrownBy(() -> client.architectures(REQUEST))
             .isInstanceOf(AiServerException.class)
             .extracting("errorCode").isEqualTo(AiErrorCode.AI_SERVER_ERROR);
     }
 
     @Test
-    void recommend_응답시간_초과면_AI_SERVER_TIMEOUT() throws Exception {
+    void architectures_422면_AI_SERVER_ERROR() {
+        server.expect(requestTo("http://ai/architectures"))
+            .andRespond(withStatus(HttpStatus.UNPROCESSABLE_CONTENT).body("{\"detail\":[{\"msg\":\"bad\"}]}"));
+
+        assertThatThrownBy(() -> client.architectures(REQUEST))
+            .isInstanceOf(AiServerException.class)
+            .extracting("errorCode").isEqualTo(AiErrorCode.AI_SERVER_ERROR);
+    }
+
+    @Test
+    void architectures_응답시간_초과면_AI_SERVER_TIMEOUT() throws Exception {
         HttpServer slowServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        slowServer.createContext("/recommend", exchange -> {
+        slowServer.createContext("/architectures", exchange -> {
             try {
                 Thread.sleep(1_000);
             } catch (InterruptedException ignored) {
@@ -93,7 +111,7 @@ class AiServerClientTest {
                 .requestFactory(factory)
                 .build());
 
-            assertThatThrownBy(() -> slowClient.recommend(REQUEST))
+            assertThatThrownBy(() -> slowClient.architectures(REQUEST))
                 .isInstanceOf(AiServerException.class)
                 .extracting("errorCode").isEqualTo(AiErrorCode.AI_SERVER_TIMEOUT);
         } finally {

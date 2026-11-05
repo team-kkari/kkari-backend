@@ -1,8 +1,7 @@
 package com.example.kkaribackend.global.ai;
 
+import com.example.kkaribackend.global.ai.dto.ArchitectureRequest;
 import com.example.kkaribackend.global.ai.dto.HealthResponse;
-import com.example.kkaribackend.global.ai.dto.RecommendRequest;
-import com.example.kkaribackend.global.ai.dto.RecommendResponse;
 import com.example.kkaribackend.global.ai.exception.AiErrorCode;
 import com.example.kkaribackend.global.ai.exception.AiServerException;
 import lombok.RequiredArgsConstructor;
@@ -25,12 +24,13 @@ public class AiServerClient {
 
     private final RestClient aiRestClient;
 
-    public RecommendResponse recommend(RecommendRequest request) {
-        return call("/recommend", () -> aiRestClient.post()
-            .uri("/recommend")
+    // 응답 JSON 을 해석하지 않고 그대로 돌려준다. 호출마다 Claude 를 여러 번 부르므로 실패해도 다시 시도하지 않는다
+    public String architectures(ArchitectureRequest request) {
+        return call("/architectures", () -> aiRestClient.post()
+            .uri("/architectures")
             .body(request)
             .retrieve()
-            .body(RecommendResponse.class));
+            .body(String.class));
     }
 
     public HealthResponse health() {
@@ -45,7 +45,9 @@ public class AiServerClient {
             return request.get();
         } catch (RestClientResponseException e) {
             log.error("AI 서버 오류 응답: {} {} {}", path, e.getStatusCode(), e.getResponseBodyAsString());
-            throw new AiServerException(AiErrorCode.AI_SERVER_ERROR);
+            // 429: AI 서버의 Claude 사용량 한도 초과
+            throw new AiServerException(e.getStatusCode().value() == 429
+                ? AiErrorCode.AI_SERVER_BUSY : AiErrorCode.AI_SERVER_ERROR);
         } catch (ResourceAccessException e) {
             if (isReadTimeout(e)) {
                 log.error("AI 서버 응답 시간 초과: {}", path, e);

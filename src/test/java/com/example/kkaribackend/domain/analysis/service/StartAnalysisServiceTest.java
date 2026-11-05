@@ -1,6 +1,7 @@
 package com.example.kkaribackend.domain.analysis.service;
 
 import com.example.kkaribackend.domain.analysis.domain.AnalysisJob;
+import com.example.kkaribackend.domain.analysis.domain.AnalysisJobType;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
 import com.example.kkaribackend.domain.analysis.exception.AwsNotConnectedException;
@@ -48,7 +49,8 @@ class StartAnalysisServiceTest {
     void 진행_중인_분석이_있으면_그_작업을_돌려준다() {
         Project project = project(AwsConnectionStatus.CONNECTED);
         when(projectFacade.getAssignedProject(1L)).thenReturn(project);
-        when(analysisJobRepository.findFirstByProjectIdAndStatusInOrderByIdDesc(1L, AnalysisStatus.IN_PROGRESS))
+        when(analysisJobRepository.findFirstByProjectIdAndTypeAndStatusInOrderByIdDesc(1L, AnalysisJobType.ANALYSIS,
+            AnalysisStatus.IN_PROGRESS))
             .thenReturn(Optional.of(AnalysisJob.builder().id(7L).project(project).status(AnalysisStatus.RUNNING)
                 .createdAt(LocalDateTime.now().minusMinutes(10)).build()));
 
@@ -63,7 +65,8 @@ class StartAnalysisServiceTest {
         AnalysisJob stale = AnalysisJob.builder().id(7L).project(project).status(AnalysisStatus.RUNNING)
             .createdAt(LocalDateTime.now().minusHours(1).minusMinutes(1)).build();
         when(projectFacade.getAssignedProject(1L)).thenReturn(project);
-        when(analysisJobRepository.findFirstByProjectIdAndStatusInOrderByIdDesc(1L, AnalysisStatus.IN_PROGRESS))
+        when(analysisJobRepository.findFirstByProjectIdAndTypeAndStatusInOrderByIdDesc(1L, AnalysisJobType.ANALYSIS,
+            AnalysisStatus.IN_PROGRESS))
             .thenReturn(Optional.of(stale));
         when(analysisJobRepository.save(any(AnalysisJob.class)))
             .thenReturn(AnalysisJob.builder().id(8L).project(project).build());

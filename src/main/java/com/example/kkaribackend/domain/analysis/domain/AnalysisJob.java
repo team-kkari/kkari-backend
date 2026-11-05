@@ -3,6 +3,7 @@ package com.example.kkaribackend.domain.analysis.domain;
 import com.example.kkaribackend.domain.project.domain.Project;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -25,17 +26,24 @@ public class AnalysisJob {
     @JoinColumn(name = "project_id", nullable = false)
     private Project project;
 
+    // type 이 생기기 전에 만든 행은 모두 인프라 분석이라, 컬럼을 추가할 때 DB 기본값으로 채운다
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    @ColumnDefault("'ANALYSIS'")
+    @Column(length = 20, nullable = false)
+    private AnalysisJobType type = AnalysisJobType.ANALYSIS;
+
     @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(length = 20, nullable = false)
     private AnalysisStatus status = AnalysisStatus.QUEUED;
 
-    // 진행 중인 단계. 시작 전에는 null
+    // 진행 중인 단계. 시작 전과 추천 아키텍처 작업은 null
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
     private AnalysisStep step;
 
-    // InfraSnapshot JSON. PostgreSQL 에서는 jsonb
+    // ANALYSIS: InfraSnapshot JSON, ARCHITECTURE: AI 서버 응답 JSON. PostgreSQL 에서는 jsonb
     @JdbcTypeCode(SqlTypes.JSON)
     private String result;
 

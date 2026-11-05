@@ -30,7 +30,8 @@ public class AnalysisController {
         return startAnalysisService.execute(projectId);
     }
 
-    @Operation(summary = "분석 작업 상태 조회", description = "상태(QUEUED/RUNNING/SUCCEEDED/FAILED), 진행 단계, 실패 이유. 결과는 discovery로 조회.")
+    @Operation(summary = "작업 상태 조회", description = "인프라 분석(ANALYSIS)과 추천 아키텍처 생성(ARCHITECTURE) 작업 공통. "
+        + "상태(QUEUED/RUNNING/SUCCEEDED/FAILED), 진행 단계(분석만), 실패 이유. 결과는 discovery·architectures로 조회.")
     @GetMapping("/jobs/{jobId}")
     public AnalysisJobResponse getJob(@PathVariable Long jobId) {
         return queryAnalysisJobService.execute(jobId);
