@@ -1,9 +1,11 @@
 package com.example.kkaribackend.domain.project.domain;
 
 public enum ProjectStage {
-    RECEIVED,   // 의뢰 접수
-    DESIGN,     // 설계
-    REVIEW,     // 검토
-    OPERATION,  // 운영
-    REPORTED    // 보고 완료
+    RECEIVED,    // 정보 입력
+    ANALYZED,    // 분석 완료
+    RECOMMENDED; // 추천 완료
+
+    public boolean isAfter(ProjectStage other) {
+        return compareTo(other) > 0;
+    }
 }

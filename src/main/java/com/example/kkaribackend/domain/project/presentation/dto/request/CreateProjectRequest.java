@@ -10,9 +10,6 @@ public record CreateProjectRequest(
 
     @NotBlank(message = "담당자는 비어있을 수 없습니다.")
     @Size(max = 50, message = "담당자는 50자 이하여야 합니다.")
-    String contactName,
-
-    @Size(max = 1000, message = "의뢰 내용은 1000자 이하여야 합니다.")
-    String memo
+    String contactName
 ) {
 }

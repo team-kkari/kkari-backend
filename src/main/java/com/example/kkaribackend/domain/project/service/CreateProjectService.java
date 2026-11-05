@@ -22,7 +22,6 @@ public class CreateProjectService {
                 .user(userFacade.getCurrentUser())
                 .companyName(request.companyName())
                 .contactName(request.contactName())
-                .memo(request.memo())
                 .build()
         );
         return new CreateProjectResponse(project.getId());

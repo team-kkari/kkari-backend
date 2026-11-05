@@ -23,7 +23,7 @@ public class ProjectController {
     private final CreateProjectService createProjectService;
     private final QueryProjectListService queryProjectListService;
 
-    @Operation(summary = "프로젝트 생성", description = "만든 엔지니어가 담당하고, 진행 단계는 RECEIVED(의뢰 접수)로 시작한다.")
+    @Operation(summary = "프로젝트 생성", description = "만든 엔지니어가 담당하고, 진행 단계는 RECEIVED(정보 입력)로 시작한다.")
     @ResponseStatus(HttpStatus.CREATED)
     @PostMapping
     public CreateProjectResponse create(@Valid @RequestBody CreateProjectRequest request) {
