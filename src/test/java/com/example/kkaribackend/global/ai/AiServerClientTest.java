@@ -323,6 +323,14 @@ class AiServerClientTest {
     }
 
     @Test
+    void terraform_Content_Disposition이_잘못되면_AI_SERVER_ERROR() {
+        reply(200, Map.of("Content-Type", "application/zip",
+            "Content-Disposition", "attachment; filename*=UTF-8''%ZZ.zip"), new byte[]{1});
+
+        assertError(() -> client.terraformFile(TERRAFORM_REQUEST, TerraformFormat.ZIP), AiErrorCode.AI_SERVER_ERROR);
+    }
+
+    @Test
     void chat은_NDJSON을_모으지_않고_한_줄씩_넘긴다() {
         CountDownLatch firstEventReceived = new CountDownLatch(1);
         AtomicBoolean streamed = new AtomicBoolean();
@@ -470,6 +478,20 @@ class AiServerClientTest {
     })
     void JSON이_아닌_오류는_상태_코드로_판단하고_다시_보내지_않는다(int status, AiErrorCode expected) {
         reply(status, Map.of("Content-Type", "text/html"), "<html>proxy</html>".getBytes());
+
+        assertError(() -> client.architectures(ARCHITECTURE_REQUEST), expected);
+        assertThat(requests).hasSize(1);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "429, AI_SERVER_UNAVAILABLE",
+        "503, AI_SERVER_UNAVAILABLE",
+        "504, AI_SERVER_TIMEOUT",
+        "502, AI_SERVER_ERROR"
+    })
+    void code가_없는_JSON_오류도_상태_코드로_판단하고_다시_보내지_않는다(int status, AiErrorCode expected) {
+        replyJson(status, "{\"message\":\"Service Unavailable\"}");
 
         assertError(() -> client.architectures(ARCHITECTURE_REQUEST), expected);
         assertThat(requests).hasSize(1);

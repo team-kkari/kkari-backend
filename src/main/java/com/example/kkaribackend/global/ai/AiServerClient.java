@@ -15,6 +15,7 @@ import com.example.kkaribackend.global.ai.exception.AiErrorCode;
 import com.example.kkaribackend.global.ai.exception.AiServerException;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -41,6 +42,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -114,11 +116,8 @@ public class AiServerClient {
 
     // 원본 응답도 함께 돌려준다. 상담 기록에 그대로 보관한다
     public ConsultResponse consult(ConsultRequest request) {
-        ConsultResponse response = call("/consult", () -> {
-            JsonNode raw = conversationClient.post().uri("/consult").body(request).retrieve().body(JsonNode.class);
-            ConsultResponse parsed = raw == null ? null : JsonMapper.shared().treeToValue(raw, ConsultResponse.class);
-            return parsed == null ? null : parsed.toBuilder().rawResponse(raw).build();
-        });
+        ConsultResponse response = postKeepingRaw("/consult", request, ConsultResponse.class,
+            (parsed, raw) -> parsed.toBuilder().rawResponse(raw).build());
         if (response == null || isBlank(response.reply())) {
             throw invalidResponse("/consult");
         }
@@ -127,15 +126,20 @@ public class AiServerClient {
 
     // 원본 응답도 함께 돌려준다. 상담 기록에 그대로 보관한다
     public IntakeResponseDto intake(IntakeRequestDto request) {
-        IntakeResponseDto response = call("/intake", () -> {
-            JsonNode raw = conversationClient.post().uri("/intake").body(request).retrieve().body(JsonNode.class);
-            IntakeResponseDto parsed = raw == null ? null : JsonMapper.shared().treeToValue(raw, IntakeResponseDto.class);
-            return parsed == null ? null : parsed.toBuilder().rawResponse(raw).build();
-        });
+        IntakeResponseDto response = postKeepingRaw("/intake", request, IntakeResponseDto.class,
+            (parsed, raw) -> parsed.toBuilder().rawResponse(raw).build());
         if (response == null || isBlank(response.reply())) {
             throw invalidResponse("/intake");
         }
         return response;
+    }
+
+    private <T> T postKeepingRaw(String path, Object request, Class<T> type, BiFunction<T, JsonNode, T> attachRaw) {
+        return call(path, () -> {
+            JsonNode raw = conversationClient.post().uri(path).body(request).retrieve().body(JsonNode.class);
+            T parsed = raw == null ? null : JsonMapper.shared().treeToValue(raw, type);
+            return parsed == null ? null : attachRaw.apply(parsed, raw);
+        });
     }
 
     // 응답 모양은 해석하지 않고 JSON 인지만 확인한다
@@ -171,12 +175,20 @@ public class AiServerClient {
             .body(new TerraformBody(request, format.name().toLowerCase(Locale.ROOT)))
             .retrieve()
             .toEntity(byte[].class));
-        String filename = response.getHeaders().getContentDisposition().getFilename();
+        String filename = filename(response.getHeaders());
         MediaType contentType = response.getHeaders().getContentType();
         if (filename == null || contentType == null || response.getBody() == null) {
             throw invalidResponse("/terraform");
         }
         return new TerraformFile(filename, contentType, response.getBody());
+    }
+
+    private static String filename(HttpHeaders headers) {
+        try {
+            return headers.getContentDisposition().getFilename();
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /**
@@ -246,11 +258,14 @@ public class AiServerClient {
             } catch (RestClientResponseException e) {
                 AiErrorResponse error = parseError(e.getResponseBodyAsString());
                 boolean retry = error != null && error.retryable() && attempt < MAX_ATTEMPTS;
-                if (!retry || !waitBeforeRetry(path, attempt)) {
-                    throw toException(path, e.getStatusCode().value(), error);
+                if (!retry) {
+                    throw errorResponseException(path, e.getStatusCode().value(), error);
+                }
+                if (!waitBeforeRetry(path, attempt)) {
+                    throw errorResponseException(path, e.getStatusCode().value(), error);
                 }
             } catch (ResourceAccessException e) {
-                throw toException(path, e);
+                throw accessException(path, e);
             } catch (JacksonException | RestClientException e) {
                 // 파싱 예외에 응답 원문이 들어 있을 수 있어 예외 메시지는 남기지 않는다
                 log.error("AI 서버 응답 처리 실패: {} {}", path, e.getClass().getSimpleName());
@@ -272,15 +287,16 @@ public class AiServerClient {
     }
 
     private AiErrorResponse parseError(String body) {
+        // 프록시 등이 보낸, code 가 없는 오류는 AI 서버 오류가 아니라 상태 코드로 판단한다
         try {
-            return JsonMapper.shared().readValue(body, AiErrorResponse.class);
+            AiErrorResponse error = JsonMapper.shared().readValue(body, AiErrorResponse.class);
+            return error == null || error.code() == null ? null : error;
         } catch (JacksonException e) {
-            // 프록시 등이 보낸 JSON 이 아닌 오류는 상태 코드로 판단한다
             return null;
         }
     }
 
-    private AiServerException toException(String path, int status, AiErrorResponse error) {
+    private AiServerException errorResponseException(String path, int status, AiErrorResponse error) {
         if (error == null) {
             log.error("AI 서버 오류 응답: {} {}", path, status);
             return new AiServerException(switch (status) {
@@ -289,7 +305,7 @@ public class AiServerClient {
                 default -> AiErrorCode.AI_SERVER_ERROR;
             });
         }
-        String code = error.code() == null ? "" : error.code();
+        String code = error.code();
         String loggedCode = code.matches("[A-Z_]{1,64}") ? code : "";
         List<String> fields = error.errors() == null ? List.of()
             : error.errors().stream().map(AiErrorResponse.FieldError::field).toList();
@@ -300,15 +316,19 @@ public class AiServerClient {
         }
         return switch (code) {
             case "REFUSED" -> new AiServerException(AiErrorCode.AI_REQUEST_REFUSED);
-            // 파일 분석의 INVALID_REQUEST 만 고객 파일 탓이라 AI 문구를 보여 준다. 다른 엔드포인트에서는 우리가 잘못 보낸 요청이다
-            case "INVALID_REQUEST" -> path.equals("/consult/files") && !isBlank(error.message())
+            case "INVALID_REQUEST" -> isCustomerFileError(path, error)
                 ? new AiServerException(AiErrorCode.AI_INVALID_REQUEST, error.message())
                 : new AiServerException(AiErrorCode.AI_SERVER_ERROR);
             default -> new AiServerException(AiErrorCode.AI_SERVER_ERROR);
         };
     }
 
-    private AiServerException toException(String path, ResourceAccessException exception) {
+    // 다른 엔드포인트의 INVALID_REQUEST 는 우리가 잘못 보낸 요청이라 AI 문구를 보여 주지 않는다
+    private static boolean isCustomerFileError(String path, AiErrorResponse error) {
+        return path.equals("/consult/files") && !isBlank(error.message());
+    }
+
+    private AiServerException accessException(String path, ResourceAccessException exception) {
         Throwable cause = exception.getCause();
         if (cause instanceof HttpTimeoutException && !(cause instanceof HttpConnectTimeoutException)) {
             log.error("AI 서버 응답 시간 초과: {}", path);
