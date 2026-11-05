@@ -114,6 +114,11 @@ volumes:
 configs:
   nginx_default:
     content: |
+      # 앱 ErrorResponse 의 timestamp(LocalDateTime)처럼 시간대 없이 적는다.
+      map $$time_iso8601 $$error_timestamp {
+        "~^(?<local>.{19})" $$local;
+      }
+
       server {
         listen 80;
         server_name _;
@@ -126,6 +131,7 @@ configs:
 
         # 백엔드 업로드 한도(요청 6MB)보다 크게 둔다. nginx 기본값(1MB)이면 Terraform 파일 업로드가 여기서 막힌다.
         client_max_body_size 10m;
+        error_page 413 @content_too_large;
 
         gzip on;
         gzip_types text/plain text/css application/javascript application/json image/svg+xml;
@@ -134,6 +140,12 @@ configs:
           access_log off;
           default_type text/plain;
           return 200 "ok";
+        }
+
+        # 한도를 넘으면 앱과 같은 JSON 오류 본문(GlobalErrorCode.CONTENT_TOO_LARGE)을 돌려준다.
+        location @content_too_large {
+          default_type application/json;
+          return 413 '{"timestamp":"$$error_timestamp","status":413,"code":"C007","message":"요청 크기가 너무 큽니다."}';
         }
 
         # API 와 Swagger 는 백엔드로 넘긴다 (경로는 그대로).
