@@ -50,6 +50,7 @@ public record RequirementsDraftResponseDto(
     private static String describe(IntakeProfile profile) {
         Map<String, String> fields = new LinkedHashMap<>();
         fields.put("목표", profile.goal());
+        fields.put("설계 원칙·고려사항", profile.designPrinciples());
         fields.put("워크로드", profile.workload());
         fields.put("현재 구성", profile.architecture());
         fields.put("트래픽", profile.traffic());
