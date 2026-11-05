@@ -5,6 +5,7 @@ import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisJobType;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
 import com.example.kkaribackend.domain.project.domain.Project;
+import com.example.kkaribackend.domain.project.domain.ProjectStage;
 import com.example.kkaribackend.domain.project.domain.Requirements;
 import com.example.kkaribackend.domain.project.domain.repository.ProjectRepository;
 import com.example.kkaribackend.domain.user.domain.Role;
@@ -57,6 +58,7 @@ class ArchitectureFlowTest {
     @MockitoBean private AiServerClient aiServerClient;
 
     private User user;
+    private User customer;
     private Project project;
     private RequestPostProcessor owner;
 
@@ -64,7 +66,10 @@ class ArchitectureFlowTest {
     void setUp() {
         user = userRepository.save(User.builder().email("architecture@kkari.com").password("pw").name("엔지니어")
             .companyName("MSP").role(Role.MSP_ENGINEER).build());
-        project = projectRepository.save(Project.builder().user(user).companyName("고객사").contactName("담당").build());
+        customer = userRepository.save(User.builder().email("customer@a.com").password("pw").name("고객")
+            .companyName("고객사").role(Role.CUSTOMER).build());
+        project = projectRepository.save(Project.builder().user(user).customer(customer)
+            .companyName("고객사").contactName("담당").serviceName("쇼핑몰").build());
         owner = loginAs(user.getId());
     }
 
@@ -110,6 +115,13 @@ class ArchitectureFlowTest {
             .andReturn().getResponse().getContentAsString();
         assertThat(OffsetDateTime.parse(objectMapper.readTree(architecture).get("generatedAt").asString())).isNotNull();
         assertThat(objectMapper.readTree(architecture).get("result")).isEqualTo(objectMapper.readTree(AI_RESPONSE));
+        assertThat(projectRepository.findById(project.getId()).orElseThrow().getStage()).isEqualTo(ProjectStage.RECOMMENDED);
+        mockMvc.perform(get("/v1/customer/services/" + project.getId()).with(customerLogin(customer.getId())))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.stage").value("RECOMMENDED"));
+        mockMvc.perform(get("/v1/customer/services").with(customerLogin(customer.getId())))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].stage").value("RECOMMENDED"));
 
         // 추천 아키텍처 작업은 분석 결과 조회에 섞이지 않는다
         mockMvc.perform(get("/v1/projects/" + project.getId() + "/discovery").with(owner))
@@ -208,6 +220,35 @@ class ArchitectureFlowTest {
         mockMvc.perform(post(url()).with(loginAs(other.getId())))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.code").value("P002"));
+    }
+
+    @Test
+    void 고객은_본인_서비스의_추천_결과만_엔지니어와_같은_응답으로_본다() throws Exception {
+        User stranger = userRepository.save(User.builder().email("stranger@a.com").password("pw").name("남")
+            .companyName("남의 회사").role(Role.CUSTOMER).build());
+        String customerUrl = "/v1/customer/services/" + project.getId() + "/architectures";
+
+        mockMvc.perform(get(customerUrl).with(customerLogin(customer.getId()))).andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.code").value("AR002"))
+            .andExpect(jsonPath("$.latestJob").hasJsonPath());
+
+        AnalysisJob succeeded = AnalysisJob.builder().project(project).type(AnalysisJobType.ARCHITECTURE).build();
+        succeeded.succeed(AI_RESPONSE);
+        analysisJobRepository.saveAndFlush(succeeded);
+        String engineerView = mockMvc.perform(get(url()).with(owner))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        mockMvc.perform(get(customerUrl).with(customerLogin(customer.getId()))).andExpect(status().isOk())
+            .andExpect(result -> assertThat(objectMapper.readTree(result.getResponse().getContentAsString()))
+                .isEqualTo(objectMapper.readTree(engineerView)));
+
+        mockMvc.perform(get(customerUrl).with(customerLogin(stranger.getId()))).andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.latestJob").doesNotHaveJsonPath());
+        mockMvc.perform(get(customerUrl).with(owner)).andExpect(status().isForbidden());
+    }
+
+    private RequestPostProcessor customerLogin(Long userId) {
+        CustomUserDetails principal = new CustomUserDetails(userId, Role.CUSTOMER);
+        return authentication(UsernamePasswordAuthenticationToken.authenticated(principal, null, principal.getAuthorities()));
     }
 
     private AnalysisJob saveSucceededAnalysis() {

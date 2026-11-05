@@ -8,12 +8,10 @@ import java.util.List;
 
 @Builder
 public record IntakeRequestDto(
-    List<Message> history,
+    List<AiMessage> history,
     @JsonProperty("infra_context") String infraContext,
     @JsonProperty("session_id") String sessionId,
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @JsonProperty("required_fields") List<String> requiredFields
 ) {
-    public record Message(String role, String content) {
-    }
 }

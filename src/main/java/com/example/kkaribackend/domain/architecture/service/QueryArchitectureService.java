@@ -26,6 +26,10 @@ public class QueryArchitectureService {
     @Transactional(readOnly = true)
     public ArchitectureResponse execute(Long projectId) {
         projectFacade.getAssignedProject(projectId);
+        return latest(projectId);
+    }
+
+    ArchitectureResponse latest(Long projectId) {
         AnalysisJobSummary latest = analysisJobRepository
             .findFirstByProjectIdAndTypeOrderByIdDesc(projectId, AnalysisJobType.ARCHITECTURE).orElse(null);
         AnalysisJob job = analysisJobRepository
