@@ -74,6 +74,16 @@ class AiServerClientTest {
     }
 
     @Test
+    void architectures_응답이_비어_있으면_AI_SERVER_ERROR() {
+        server.expect(requestTo("http://ai/architectures"))
+            .andRespond(withSuccess("null", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> client.architectures(REQUEST))
+            .isInstanceOf(AiServerException.class)
+            .extracting("errorCode").isEqualTo(AiErrorCode.AI_SERVER_ERROR);
+    }
+
+    @Test
     void architectures_5xx면_AI_SERVER_ERROR() {
         server.expect(requestTo("http://ai/architectures"))
             .andRespond(withServerError().body("{\"detail\":\"generation failed\"}"));

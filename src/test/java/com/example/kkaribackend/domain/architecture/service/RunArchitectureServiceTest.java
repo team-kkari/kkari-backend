@@ -59,16 +59,6 @@ class RunArchitectureServiceTest {
     }
 
     @Test
-    void AI_응답_본문이_비어_있으면_FAILED() {
-        when(aiServerClient.architectures(REQUEST)).thenReturn(null);
-
-        service.execute(new ArchitectureRequestedEvent(10L, REQUEST));
-
-        assertThat(job.getStatus()).isEqualTo(AnalysisStatus.FAILED);
-        assertThat(job.getResult()).isNull();
-    }
-
-    @Test
     void 이미_실패_처리된_작업은_실행하지_않는다() {
         job.fail("시간 초과로 중단되었습니다.");
 

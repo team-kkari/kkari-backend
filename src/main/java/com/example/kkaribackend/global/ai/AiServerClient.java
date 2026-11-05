@@ -28,11 +28,16 @@ public class AiServerClient {
 
     // 응답 모양은 해석하지 않고 JSON 인지만 확인한다. 호출마다 Claude 를 여러 번 부르므로 실패해도 다시 시도하지 않는다
     public JsonNode architectures(ArchitectureRequest request) {
-        return call("/architectures", () -> aiRestClient.post()
+        JsonNode architectures = call("/architectures", () -> aiRestClient.post()
             .uri("/architectures")
             .body(request)
             .retrieve()
             .body(JsonNode.class));
+        if (isEmpty(architectures)) {
+            log.error("AI 서버 응답이 비어 있습니다: /architectures");
+            throw new AiServerException(AiErrorCode.AI_SERVER_ERROR);
+        }
+        return architectures;
     }
 
     public HealthResponse health() {
@@ -61,6 +66,10 @@ public class AiServerClient {
             log.error("AI 서버 요청 실패: {}", path, e);
             throw new AiServerException(AiErrorCode.AI_SERVER_ERROR);
         }
+    }
+
+    private boolean isEmpty(JsonNode body) {
+        return body == null || body.isNull() || body.isMissingNode();
     }
 
     private boolean isReadTimeout(ResourceAccessException e) {

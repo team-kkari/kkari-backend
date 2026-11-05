@@ -46,13 +46,10 @@ public class StartArchitectureService {
         Optional<AnalysisJob> inProgress = analysisJobRepository
             .findFirstByProjectIdAndTypeAndStatusInOrderByIdDesc(projectId, AnalysisJobType.ARCHITECTURE,
                 AnalysisStatus.IN_PROGRESS);
-        if (inProgress.isPresent()) {
-            AnalysisJob job = inProgress.get();
-            if (job.getCreatedAt().isAfter(LocalDateTime.now().minus(STALE_AFTER))) {
-                return new StartArchitectureResponse(job.getId());
-            }
-            job.fail(STALE_FAILURE_REASON);
+        if (inProgress.isPresent() && !isStale(inProgress.get())) {
+            return new StartArchitectureResponse(inProgress.get().getId());
         }
+        inProgress.ifPresent(staleJob -> staleJob.fail(STALE_FAILURE_REASON));
 
         InfraSnapshot snapshot = objectMapper.readValue(latestAnalysis.getResult(), InfraSnapshot.class);
         ArchitectureRequest input = ArchitectureInputFactory.create(snapshot, project.getTerraform(),
@@ -62,6 +59,10 @@ public class StartArchitectureService {
             .project(project).type(AnalysisJobType.ARCHITECTURE).build());
         eventPublisher.publishEvent(new ArchitectureRequestedEvent(created.getId(), input));
         return new StartArchitectureResponse(created.getId());
+    }
+
+    private boolean isStale(AnalysisJob job) {
+        return job.getCreatedAt().isBefore(LocalDateTime.now().minus(STALE_AFTER));
     }
 
     private int requestedCount(StartArchitectureRequest request) {
