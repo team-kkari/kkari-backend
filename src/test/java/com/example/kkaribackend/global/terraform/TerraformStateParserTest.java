@@ -1,10 +1,9 @@
 package com.example.kkaribackend.global.terraform;
 
-import com.example.kkaribackend.global.aws.AwsCostEstimator;
-import com.example.kkaribackend.global.aws.dto.InfraSnapshot;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Ec2Instance;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Missing;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.RdsInstance;
+import com.example.kkaribackend.global.terraform.dto.TerraformInfra;
 import com.example.kkaribackend.global.terraform.exception.InvalidTerraformStateException;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
@@ -14,9 +13,8 @@ import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
 
-// STATE 는 TerraformUploadTest 에서도 쓴다
+// STATE 는 TerraformControllerTest 에서도 쓴다
 public class TerraformStateParserTest {
     public static final String SECRET = "super-secret-pw-1234";
     public static final String STATE = """
@@ -38,23 +36,20 @@ public class TerraformStateParserTest {
         """.formatted(SECRET);
 
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final TerraformStateParser parser = new TerraformStateParser(objectMapper, mock(AwsCostEstimator.class));
+    private final TerraformStateParser parser = new TerraformStateParser(objectMapper);
 
     @Test
     void 지원하는_리소스만_필요한_속성으로_읽고_나머지는_missing에_남긴다() {
-        InfraSnapshot snapshot = parser.parse(file("terraform.tfstate", STATE));
+        TerraformInfra terraform = parser.parse(file("terraform.tfstate", STATE));
 
-        assertThat(snapshot.source()).isEqualTo("TERRAFORM");
-        assertThat(snapshot.resources().ec2()).containsExactly(
+        assertThat(terraform.resources().ec2()).containsExactly(
             new Ec2Instance("i-0abc", "t3.micro", null, "running", "ap-northeast-2a"));
-        assertThat(snapshot.resources().rds()).containsExactly(
+        assertThat(terraform.resources().rds()).containsExactly(
             new RdsInstance("prod-db", "db.t3.micro", "mysql", false, 20, "available"));
-        assertThat(snapshot.resources().s3()).isEmpty();
-        assertThat(snapshot.usage()).isNull();
-        assertThat(snapshot.missing()).extracting(Missing::target)
-            .containsExactly("STRUCTURE TERRAFORM", "STRUCTURE EC2", "USAGE");
-        assertThat(snapshot.missing().getFirst().reason()).contains("1개", "aws_iam_role").doesNotContain("aws_ami");
-        assertThat(objectMapper.writeValueAsString(snapshot)).doesNotContain(SECRET, "admin");
+        assertThat(terraform.resources().s3()).isEmpty();
+        assertThat(terraform.missing()).extracting(Missing::target).containsExactly("STRUCTURE TERRAFORM");
+        assertThat(terraform.missing().getFirst().reason()).contains("1개", "aws_iam_role").doesNotContain("aws_ami");
+        assertThat(objectMapper.writeValueAsString(terraform)).doesNotContain(SECRET, "admin");
     }
 
     @Test
