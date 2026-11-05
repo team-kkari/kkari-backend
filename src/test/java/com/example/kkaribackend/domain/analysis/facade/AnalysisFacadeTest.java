@@ -73,6 +73,26 @@ class AnalysisFacadeTest {
     }
 
     @Test
+    void 모르는_스펙과_사용률은_null_문자열_없이_요약한다() {
+        // Terraform state 에는 EC2 platform 이 없다
+        Resources unknown = new Resources(
+            List.of(new Ec2Instance("i-1", "t3.micro", null, "running", "ap-northeast-2a")),
+            List.of(new EbsVolume("vol-1", "gp3", null)),
+            List.of(new RdsInstance("db", "db.t3.micro", "mysql", null, null, "available")),
+            List.of(new S3Bucket("bucket", null)), List.of(new LambdaFunction("fn", null, null)),
+            List.of(new LoadBalancer("lb", null)), List.of());
+        store(InfraSnapshot.builder().resources(unknown)
+            .usage(new Usage(14, 3600, "Average", Map.of("EC2",
+                Map.of("i-1", Map.of("CPUUtilization", new MetricStats(null, null, null, 0)))))).build());
+        project.updateTerraform(new TerraformInfra(unknown, List.of(), Instant.EPOCH));
+
+        assertThat(facade.getInfraContext(project)).doesNotContain("null")
+            .contains("t3.micro, running, ap-northeast-2a × 1", "EBS: 1개; gp3 × 1",
+                "db.t3.micro, mysql, available × 1", "S3: 1개; 스펙 알 수 없음 × 1",
+                "평균=알 수 없음, p95=알 수 없음");
+    }
+
+    @Test
     void 분석과_Terraform을_함께_요약한다() {
         store(InfraSnapshot.builder().region("ap-northeast-2").resources(resources()).build());
         project.updateTerraform(new TerraformInfra(resources(), List.of(), Instant.EPOCH));
