@@ -14,6 +14,7 @@ import com.example.kkaribackend.global.terraform.exception.InvalidTerraformState
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.util.StringUtils;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -51,7 +52,9 @@ public class TerraformStateParser {
 
         List<Missing> missing = new ArrayList<>();
         Resources resources = readResources(root.path("resources"), missing);
-        return new TerraformInfra(resources, missing, Instant.now());
+        String name = file.getOriginalFilename();
+        return TerraformInfra.builder().resources(resources).missing(missing).uploadedAt(Instant.now())
+            .fileName(name == null ? null : StringUtils.getFilename(name.replace('\\', '/'))).size(file.getSize()).build();
     }
 
     private JsonNode readJson(MultipartFile file) {
