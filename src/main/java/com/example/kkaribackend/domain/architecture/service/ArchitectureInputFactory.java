@@ -77,9 +77,14 @@ public final class ArchitectureInputFactory {
 
     private static String describeInfra(InfraSnapshot snapshot, TerraformInfra terraform) {
         List<String> lines = new ArrayList<>();
-        lines.add(snapshot.region() == null ? "[AWS]" : "[AWS] 리전 " + snapshot.region());
-        for (Resource resource : listResources(snapshot.resources())) {
-            lines.add(describeWithUsageAndCost(resource, snapshot));
+        if (snapshot == null) {
+            // 신규 구축: 분석한 AWS 인프라가 없다
+            lines.add("[신규 구축] 기존 AWS 인프라 없음");
+        } else {
+            lines.add(snapshot.region() == null ? "[AWS]" : "[AWS] 리전 " + snapshot.region());
+            for (Resource resource : listResources(snapshot.resources())) {
+                lines.add(describeWithUsageAndCost(resource, snapshot));
+            }
         }
         if (terraform != null) {
             lines.add("[Terraform]");

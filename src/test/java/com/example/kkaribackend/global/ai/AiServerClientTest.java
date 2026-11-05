@@ -58,7 +58,7 @@ class AiServerClientTest {
 
     private static final ArchitectureRequest ARCHITECTURE_REQUEST = ArchitectureRequest.builder()
         .infra("EC2 i-1: t3.micro").goal("").priorities(List.of("cost")).count(3).build();
-    private static final IntakeRequestDto INTAKE_REQUEST = new IntakeRequestDto(List.of(), "", "project-1", null);
+    private static final IntakeRequestDto INTAKE_REQUEST = new IntakeRequestDto(List.of(), "", "project-1", null, null);
     private static final TerraformRequest TERRAFORM_REQUEST = TerraformRequest.builder()
         .name("serverless").diagram(json("{\"nodes\":[]}")).build();
     private static final String ERROR_BODY = "{\"code\":\"%s\",\"message\":\"%s\",\"retryable\":%s}";
@@ -210,11 +210,11 @@ class AiServerClientTest {
              "recommend_request":{"infra":"EC2","constraints":{"monthly_budget":0}},"extra":true}""");
 
         IntakeResponseDto response = client.intake(new IntakeRequestDto(
-            List.of(new AiMessage("user", "안녕")), "EC2 1대", "project-12", List.of("company_name")));
+            List.of(new AiMessage("user", "안녕")), "EC2 1대", "project-12", List.of("company_name"), "NONE"));
 
         assertThat(json(requests.getFirst().body())).isEqualTo(json("""
             {"history":[{"role":"user","content":"안녕"}],"infra_context":"EC2 1대","session_id":"project-12",
-             "required_fields":["company_name"]}"""));
+             "required_fields":["company_name"],"infra_status":"NONE"}"""));
         assertThat(response.reply()).isEqualTo("질문");
         assertThat(response.profile().companyName()).isEqualTo("고객사");
         assertThat(response.profile().monthlyBudget()).isEqualByComparingTo("3000000.0");

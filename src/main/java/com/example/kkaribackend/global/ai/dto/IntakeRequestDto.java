@@ -12,6 +12,8 @@ public record IntakeRequestDto(
     @JsonProperty("infra_context") String infraContext,
     @JsonProperty("session_id") String sessionId,
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    @JsonProperty("required_fields") List<String> requiredFields
+    @JsonProperty("required_fields") List<String> requiredFields,
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @JsonProperty("infra_status") String infraStatus
 ) {
 }
