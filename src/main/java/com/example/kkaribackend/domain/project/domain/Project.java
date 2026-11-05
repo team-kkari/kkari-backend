@@ -1,6 +1,7 @@
 package com.example.kkaribackend.domain.project.domain;
 
 import com.example.kkaribackend.domain.user.domain.User;
+import com.example.kkaribackend.global.terraform.dto.TerraformInfra;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -62,6 +63,10 @@ public class Project {
     @JdbcTypeCode(SqlTypes.JSON)
     private Requirements requirements;
 
+    // 선택 입력인 Terraform state 에서 읽은 리소스 구조. 다시 올리면 교체한다. 원본 파일은 저장하지 않는다
+    @JdbcTypeCode(SqlTypes.JSON)
+    private TerraformInfra terraform;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -81,5 +86,9 @@ public class Project {
 
     public void updateRequirements(Requirements requirements) {
         this.requirements = requirements;
+    }
+
+    public void updateTerraform(TerraformInfra terraform) {
+        this.terraform = terraform;
     }
 }

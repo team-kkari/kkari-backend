@@ -1,6 +1,7 @@
 package com.example.kkaribackend.domain.analysis.service;
 
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
+import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
 import com.example.kkaribackend.domain.analysis.presentation.dto.response.AnalysisJobResponse;
 import com.example.kkaribackend.domain.analysis.presentation.dto.response.DiscoveryResponse;
 import com.example.kkaribackend.domain.project.domain.AwsConnectionStatus;
@@ -42,6 +43,8 @@ class AnalysisFlowTest {
     private UserRepository userRepository;
     @Autowired
     private ProjectRepository projectRepository;
+    @Autowired
+    private AnalysisJobRepository analysisJobRepository;
     @MockitoBean
     private AwsConnectionProvider awsConnectionProvider;
     @MockitoBean
@@ -50,6 +53,9 @@ class AnalysisFlowTest {
     @AfterEach
     void tearDown() {
         SecurityContextHolder.clearContext();
+        analysisJobRepository.deleteAll();
+        projectRepository.deleteAll();
+        userRepository.deleteAll();
     }
 
     @Test

@@ -36,7 +36,8 @@ public class AnalysisController {
         return queryAnalysisJobService.execute(jobId);
     }
 
-    @Operation(summary = "최근 분석 결과 조회", description = "마지막으로 성공한 분석 결과. 비용은 온디맨드 정가 기준 추정치(USD).")
+    @Operation(summary = "최근 분석 결과 조회", description = "마지막으로 성공한 분석 결과. 비용은 온디맨드 정가 기준 추정치(USD). "
+        + "terraform은 업로드한 state 파일의 리소스 구조(같은 모양·ID), 올리지 않았으면 null.")
     @GetMapping("/projects/{projectId}/discovery")
     public DiscoveryResponse getDiscovery(@PathVariable Long projectId) {
         return queryDiscoveryService.execute(projectId);
