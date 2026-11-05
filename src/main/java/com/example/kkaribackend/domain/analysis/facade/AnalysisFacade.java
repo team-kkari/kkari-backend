@@ -3,6 +3,7 @@ package com.example.kkaribackend.domain.analysis.facade;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisJobType;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
+import com.example.kkaribackend.domain.project.domain.CustomerAnswers;
 import com.example.kkaribackend.domain.project.domain.Project;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Resources;
@@ -40,6 +41,10 @@ public class AnalysisFacade {
                 .append("; 사용률·비용 없음\n");
             appendResources(text, terraform.resources());
             text.append("누락 항목: ").append(size(terraform.missing())).append("개\n");
+        }
+        String answers = CustomerAnswers.describe(project.getAnswers());
+        if (!answers.isEmpty()) {
+            text.append(answers).append('\n');
         }
         if (text.length() > MAX_LENGTH) {
             int end = MAX_LENGTH - OMITTED.length();

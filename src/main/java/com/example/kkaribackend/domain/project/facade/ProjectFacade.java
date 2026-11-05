@@ -3,7 +3,9 @@ package com.example.kkaribackend.domain.project.facade;
 import com.example.kkaribackend.domain.project.domain.Project;
 import com.example.kkaribackend.domain.project.domain.repository.ProjectRepository;
 import com.example.kkaribackend.domain.project.exception.NotAssignedProjectException;
+import com.example.kkaribackend.domain.project.exception.NotRegisteredProjectException;
 import com.example.kkaribackend.domain.project.exception.ProjectNotFoundException;
+import com.example.kkaribackend.domain.user.domain.User;
 import com.example.kkaribackend.domain.user.facade.UserFacade;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -26,6 +28,16 @@ public class ProjectFacade {
     // 트랜잭션이 끝날 때까지 프로젝트 행을 잠가서, 같은 프로젝트의 동시 요청이 차례로 처리되게 한다
     public Project lockAssignedProject(Long projectId) {
         return checkAssigned(projectRepository.findByIdForUpdate(projectId));
+    }
+
+    // 현재 고객이 등록한 서비스만 반환한다
+    public Project getRegisteredProject(Long projectId) {
+        Project project = projectRepository.findById(projectId).orElseThrow(ProjectNotFoundException::new);
+        User customer = project.getCustomer();
+        if (customer == null || !customer.getId().equals(userFacade.getCurrentUserId())) {
+            throw new NotRegisteredProjectException();
+        }
+        return project;
     }
 
     private Project checkAssigned(Optional<Project> found) {

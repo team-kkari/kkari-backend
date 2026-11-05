@@ -21,6 +21,14 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
         """)
     List<Project> findAllByUserId(@Param("userId") Long userId, @Param("stage") ProjectStage stage);
 
+    @Query("""
+        select p from Project p
+        join fetch p.user
+        where p.customer.id = :customerId
+        order by p.createdAt desc, p.id desc
+        """)
+    List<Project> findAllByCustomerIdWithEngineer(@Param("customerId") Long customerId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from Project p where p.id = :id")
     Optional<Project> findByIdForUpdate(@Param("id") Long id);

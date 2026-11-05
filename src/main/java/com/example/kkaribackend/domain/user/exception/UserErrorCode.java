@@ -9,7 +9,8 @@ import org.springframework.http.HttpStatus;
 @AllArgsConstructor
 public enum UserErrorCode implements ErrorProperty {
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "U001", "유저를 찾을 수 없습니다."),
-    USER_ALREADY_EXISTS(HttpStatus.CONFLICT, "U002", "이미 가입된 이메일입니다.");
+    USER_ALREADY_EXISTS(HttpStatus.CONFLICT, "U002", "이미 가입된 이메일입니다."),
+    ENGINEER_NOT_FOUND(HttpStatus.NOT_FOUND, "U003", "엔지니어를 찾을 수 없습니다.");
 
     private final HttpStatus status;
     private final String code;

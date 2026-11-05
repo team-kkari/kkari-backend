@@ -1,5 +1,6 @@
 package com.example.kkaribackend.domain.architecture.service;
 
+import com.example.kkaribackend.domain.project.domain.CustomerAnswers;
 import com.example.kkaribackend.domain.project.domain.Requirements;
 import com.example.kkaribackend.global.ai.dto.ArchitectureRequest;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot;
@@ -21,7 +22,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 분석 결과·Terraform·요구사항으로 AI 서버 입력을 만든다.
+ * 분석 결과·Terraform·요구사항·고객 답변으로 AI 서버 입력을 만든다.
  * infra 는 한 줄에 리소스 하나로 쓰고, 결과에 없는 값은 만들지 않는다.
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
@@ -36,10 +37,10 @@ public final class ArchitectureInputFactory {
     }
 
     public static ArchitectureRequest create(InfraSnapshot snapshot, TerraformInfra terraform,
-                                             Requirements requirements, int count) {
+                                             Requirements requirements, Map<String, String> answers, int count) {
         return ArchitectureRequest.builder()
             .infra(describeInfra(snapshot, terraform))
-            .goal(describeGoal(requirements))
+            .goal(joinNonBlank("\n", describeGoal(requirements), CustomerAnswers.describe(answers)))
             .priorities(priorityNames(requirements))
             .count(count)
             .build();

@@ -80,6 +80,15 @@ class AnalysisFacadeTest {
     }
 
     @Test
+    void 고객_답변을_질문_답_줄로_붙인다() {
+        Project registered = Project.builder().id(1L).answers(Map.of("트래픽", "평일 낮 집중", "DB", "MySQL")).build();
+        registered.updateTerraform(new TerraformInfra(resources(), List.of(), Instant.EPOCH));
+
+        assertThat(facade.getInfraContext(registered)).contains("[Terraform]")
+            .endsWith("[고객 답변]\nDB: MySQL\n트래픽: 평일 낮 집중\n");
+    }
+
+    @Test
     void 긴_요약은_4000자_안에서_생략_표시로_끝난다() {
         List<Ec2Instance> instances = new ArrayList<>();
         for (int i = 0; i < 500; i++) {

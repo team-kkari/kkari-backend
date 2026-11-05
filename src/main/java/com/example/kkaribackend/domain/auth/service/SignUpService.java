@@ -20,7 +20,7 @@ public class SignUpService {
     private final JwtProvider jwtProvider;
 
     @Transactional
-    public TokenResponse execute(SignUpRequest request) {
+    public TokenResponse execute(SignUpRequest request, Role role) {
         if (userRepository.existsByEmail(request.email())) {
             throw new UserAlreadyExistsException();
         }
@@ -31,10 +31,10 @@ public class SignUpService {
                 .password(passwordEncoder.encode(request.password()))
                 .name(request.name())
                 .companyName(request.companyName())
-                .role(Role.MSP_ENGINEER)
+                .role(role)
                 .build()
         );
 
-        return new TokenResponse(jwtProvider.generateAccessToken(user.getId(), user.getRole()));
+        return new TokenResponse(jwtProvider.generateAccessToken(user.getId(), role), role);
     }
 }
