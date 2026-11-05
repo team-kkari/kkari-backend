@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -38,7 +39,7 @@ public class AnalysisFacade {
             .ifPresent(job -> appendSnapshot(text, objectMapper.readValue(job.getResult(), InfraSnapshot.class)));
         if (project.getTerraform() != null) {
             var terraform = project.getTerraform();
-            text.append("[Terraform] 업로드 시각: ").append(terraform.uploadedAt())
+            text.append("[Terraform] 업로드 시각: ").append(orUnknown(terraform.uploadedAt()))
                 .append("; 사용률·비용 없음\n");
             appendResources(text, terraform.resources());
             text.append("누락 항목: ").append(size(terraform.missing())).append("개\n");
@@ -52,8 +53,8 @@ public class AnalysisFacade {
     }
 
     private void appendSnapshot(StringBuilder text, InfraSnapshot snapshot) {
-        text.append("[AWS 분석] 리전: ").append(snapshot.region())
-            .append("; 수집 시각: ").append(snapshot.collectedAt()).append('\n');
+        text.append("[AWS 분석] 리전: ").append(orUnknown(snapshot.region()))
+            .append("; 수집 시각: ").append(orUnknown(snapshot.collectedAt())).append('\n');
         appendResources(text, snapshot.resources());
         text.append("월 예상 비용(USD):\n");
         var costs = snapshot.cost() == null ? null : snapshot.cost().monthlyUsdByResource();
@@ -76,7 +77,8 @@ public class AnalysisFacade {
                     if (metrics != null) {
                         new TreeMap<>(metrics).forEach((name, stats) -> text.append(kind).append(' ')
                             .append(id).append(' ').append(name).append(": ")
-                            .append(stats == null ? "알 수 없음" : "평균=" + stats.average() + ", p95=" + stats.p95())
+                            .append(stats == null ? "알 수 없음" : "평균=" + orUnknown(stats.average())
+                                + ", p95=" + orUnknown(stats.p95()))
                             .append('\n'));
                     }
                 });
@@ -89,15 +91,27 @@ public class AnalysisFacade {
             text.append("리소스 구조: 알 수 없음\n");
             return;
         }
-        appendGroup(text, "EC2", resources.ec2(), r -> r.instanceType() + ", " + r.state()
-            + ", " + r.platform() + ", " + r.availabilityZone());
-        appendGroup(text, "EBS", resources.ebs(), r -> r.volumeType() + ", " + r.sizeGiB() + " GiB");
-        appendGroup(text, "RDS", resources.rds(), r -> r.instanceClass() + ", " + r.engine()
-            + ", Multi-AZ=" + r.multiAz() + ", " + r.allocatedStorageGiB() + " GiB, " + r.status());
-        appendGroup(text, "S3", resources.s3(), r -> "크기=" + r.sizeBytes() + " bytes");
-        appendGroup(text, "LAMBDA", resources.lambda(), r -> r.runtime() + ", " + r.memoryMb() + " MB");
-        appendGroup(text, "ELB", resources.loadBalancers(), r -> r.type());
-        appendGroup(text, "NAT", resources.natGateways(), r -> r.state());
+        appendGroup(text, "EC2", resources.ec2(), r -> specs(r.instanceType(), r.state(), r.platform(),
+            r.availabilityZone()));
+        appendGroup(text, "EBS", resources.ebs(), r -> specs(r.volumeType(), withUnit(r.sizeGiB(), "GiB")));
+        appendGroup(text, "RDS", resources.rds(), r -> specs(r.instanceClass(), r.engine(),
+            r.multiAz() == null ? null : "Multi-AZ=" + r.multiAz(), withUnit(r.allocatedStorageGiB(), "GiB"),
+            r.status()));
+        appendGroup(text, "S3", resources.s3(), r -> specs(r.sizeBytes() == null ? null : "크기=" + r.sizeBytes() + " bytes"));
+        appendGroup(text, "LAMBDA", resources.lambda(), r -> specs(r.runtime(), withUnit(r.memoryMb(), "MB")));
+        appendGroup(text, "ELB", resources.loadBalancers(), r -> specs(r.type()));
+        appendGroup(text, "NAT", resources.natGateways(), r -> specs(r.state()));
+    }
+
+    // 모르는 값은 "null" 문자열로 AI 에 넘기지 않고 뺀다
+    private String specs(String... values) {
+        String joined = Arrays.stream(values).filter(value -> value != null && !value.isBlank())
+            .collect(Collectors.joining(", "));
+        return joined.isEmpty() ? "스펙 알 수 없음" : joined;
+    }
+
+    private String withUnit(Number value, String unit) {
+        return value == null ? null : value + " " + unit;
     }
 
     private <T> void appendGroup(StringBuilder text, String kind, List<T> resources, Function<T, String> spec) {
@@ -112,6 +126,10 @@ public class AnalysisFacade {
             r -> String.valueOf(spec.apply(r)), TreeMap::new, Collectors.counting()));
         groups.forEach((description, count) -> text.append("; ").append(description).append(" × ").append(count));
         text.append('\n');
+    }
+
+    private String orUnknown(Object value) {
+        return value == null ? "알 수 없음" : value.toString();
     }
 
     private int size(List<?> values) {
