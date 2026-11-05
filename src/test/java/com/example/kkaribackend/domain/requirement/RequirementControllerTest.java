@@ -26,6 +26,35 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 class RequirementControllerTest {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"JPY", "EUR"})
+    void AI가_지원하지_않는_통화는_저장하지_않고_기존_요구사항을_보존한다(String currency) throws Exception {
+        mockMvc.perform(put(url).with(owner).contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+            .andExpect(status().isOk());
+        mockMvc.perform(put(url).with(owner).contentType(MediaType.APPLICATION_JSON)
+                .content(VALID_BODY.replace("USD", currency)))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("C001"));
+        mockMvc.perform(get(url).with(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.currency").value("USD"));
+    }
+
+    @Test
+    void KRW_입력은_허용하고_원본_금액과_통화를_USD로_재해석하지_않는다() throws Exception {
+        String input = VALID_BODY.replace("1500.50", "140000").replace("USD", "KRW");
+        mockMvc.perform(put(url).with(owner).contentType(MediaType.APPLICATION_JSON).content(input))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.monthlyBudget").value(140000))
+            .andExpect(jsonPath("$.currency").value("KRW"));
+        mockMvc.perform(get(url).with(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.monthlyBudget").value(140000))
+            .andExpect(jsonPath("$.currency").value("KRW"));
+    }
+
+    @Test
+    void 양수_예산에_통화가_없으면_USD로_추측하지_않고_400을_돌려준다() throws Exception {
+        String input = VALID_BODY.replace("\"currency\":\"USD\",", "");
+        mockMvc.perform(put(url).with(owner).contentType(MediaType.APPLICATION_JSON).content(input))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("C001"));
+    }
 
     private static final String VALID_BODY = """
         {"content":"트래픽 급증에도 버티는 구조","priorities":["COST","SECURITY"],

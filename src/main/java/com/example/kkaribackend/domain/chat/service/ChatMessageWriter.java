@@ -4,6 +4,8 @@ import com.example.kkaribackend.domain.chat.domain.ChatMessage;
 import com.example.kkaribackend.domain.chat.domain.ChatRole;
 import com.example.kkaribackend.domain.chat.domain.repository.ChatMessageRepository;
 import com.example.kkaribackend.domain.project.domain.Project;
+import com.example.kkaribackend.domain.project.domain.repository.ProjectRepository;
+import com.example.kkaribackend.domain.project.exception.ProjectNotFoundException;
 import com.example.kkaribackend.global.ai.dto.IntakeResponseDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -14,6 +16,7 @@ import tools.jackson.databind.json.JsonMapper;
 @RequiredArgsConstructor
 public class ChatMessageWriter {
     private final ChatMessageRepository chatMessageRepository;
+    private final ProjectRepository projectRepository;
 
     @Transactional
     public ChatMessage saveUser(Project project, int seq, String content, String clientMessageId) {
@@ -24,7 +27,7 @@ public class ChatMessageWriter {
     @Transactional
     public ChatMessage saveAssistant(Project project, int seq, IntakeResponseDto response, String infraContextHash) {
         // AI 에 보낸 마지막 seq 다음에만 저장한다. 대화가 바뀌면 유니크 제약으로 거절한다
-        return chatMessageRepository.saveAndFlush(ChatMessage.builder()
+        ChatMessage assistant = chatMessageRepository.saveAndFlush(ChatMessage.builder()
             .project(project).seq(seq).role(ChatRole.ASSISTANT).content(response.reply())
             .quickReplies(response.quickReplies()).profile(response.profile()).missingFields(response.missingFields())
             .missing(response.missing())
@@ -36,5 +39,11 @@ public class ChatMessageWriter {
                 ? JsonMapper.shared().writeValueAsString(response) : response.rawResponse().toString())
             .infraContextHash(infraContextHash)
             .build());
+        if (response.profile() != null) {
+            // AI 호출 전의 분리된 Project를 merge하면 그동안 저장한 요구사항을 덮어쓸 수 있다.
+            projectRepository.findById(project.getId()).orElseThrow(ProjectNotFoundException::new)
+                .updateCompanyNameFromChat(response.profile().companyName());
+        }
+        return assistant;
     }
 }

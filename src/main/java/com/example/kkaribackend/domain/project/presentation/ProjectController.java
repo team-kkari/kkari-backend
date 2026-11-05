@@ -33,13 +33,15 @@ public class ProjectController {
         return createProjectService.execute(request);
     }
 
-    @Operation(summary = "내 프로젝트 목록", description = "진행 단계로 필터, 최근 수정 순.")
+    @Operation(summary = "내 프로젝트 목록", description = "진행 단계로 필터, 최근 수정 순. monthlyCost는 최근 성공한 "
+        + "인프라 분석의 월 예상 비용 합(USD)이며 미수집·부분 누락은 null이다. updatedAt은 offset을 포함한다.")
     @GetMapping
     public List<ProjectListResponse> list(@RequestParam(required = false) ProjectStage stage) {
         return queryProjectListService.execute(stage);
     }
 
-    @Operation(summary = "프로젝트 상세", description = "고객이 등록한 서비스면 serviceName·answers가 있고, 직접 만든 프로젝트는 둘 다 null.")
+    @Operation(summary = "프로젝트 상세", description = "고객이 등록한 서비스면 serviceName·answers가 있고, 직접 만든 프로젝트는 둘 다 null. "
+        + "terraformUploaded와 terraform(fileName·size 포함)으로 업로드 상태를 복원한다. createdAt·updatedAt은 offset을 포함한다.")
     @GetMapping("/{projectId}")
     public ProjectDetailResponse get(@PathVariable Long projectId) {
         return queryProjectService.execute(projectId);
