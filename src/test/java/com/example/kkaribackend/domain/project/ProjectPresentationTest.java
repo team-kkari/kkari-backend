@@ -79,6 +79,23 @@ class ProjectPresentationTest {
     }
 
     @Test
+    void 목록은_고객_접수_여부와_서비스명과_생성_시각을_포함한다() throws Exception {
+        User customer = userRepository.saveAndFlush(User.builder().email("submit-list@a.com").password("pw").name("고객")
+            .companyName("고객사").role(Role.CUSTOMER).build());
+        Project submitted = projectRepository.saveAndFlush(Project.builder().user(user).customer(customer)
+            .serviceName("쇼핑몰").companyName("고객사").contactName("고객").build());
+
+        JsonNode list = objectMapper.readTree(mockMvc.perform(get("/v1/projects").with(owner)).andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString());
+        assertThat(item(list, submitted.getId()).get("customerSubmitted").asBoolean()).isTrue();
+        assertThat(item(list, submitted.getId()).get("serviceName").asString()).isEqualTo("쇼핑몰");
+        assertThat(item(list, project.getId()).get("customerSubmitted").asBoolean()).isFalse();
+        assertThat(item(list, project.getId()).get("serviceName").isNull()).isTrue();
+        assertThat(OffsetDateTime.parse(item(list, project.getId()).get("createdAt").asString()).toInstant())
+            .isEqualTo(project.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant());
+    }
+
+    @Test
     void 상세의_생성과_수정_시각은_offset을_포함한다() throws Exception {
         JsonNode detail = objectMapper.readTree(mockMvc.perform(get("/v1/projects/" + project.getId()).with(owner))
             .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
