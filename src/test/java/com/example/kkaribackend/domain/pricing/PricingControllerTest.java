@@ -20,6 +20,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -63,6 +65,18 @@ class PricingControllerTest {
             .andExpect(jsonPath("$.items[1].monthly_usd").isEmpty())
             .andExpect(jsonPath("$.unpriced[0]").value("X"))
             .andExpect(jsonPath("$.assumptions[0]").exists());
+    }
+
+    @Test
+    void AI가_보내는_밑줄_들어간_spec은_받는다() throws Exception {
+        when(estimateArchitectureCostService.execute(any(EstimateCostRequest.class)))
+            .thenReturn(new CostReport(BigDecimal.ZERO, List.of(), List.of(), List.of()));
+        String s3 = BODY.replace("\"kind\": \"ec2\", \"spec\": \"m7g.large\"", "\"kind\": \"s3\", \"spec\": \"standard_ia\"");
+
+        mockMvc.perform(estimate(s3).header(InternalTokenAuthorizationManager.HEADER, TOKEN))
+            .andExpect(status().isOk());
+        verify(estimateArchitectureCostService).execute(argThat(request ->
+            request.nodes().getFirst().pricing().spec().equals("standard_ia")));
     }
 
     @Test

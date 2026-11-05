@@ -25,8 +25,8 @@ public record ArchitectureNode(
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record Pricing(
         @NotBlank @Size(max = 40) String kind,
-        @NotNull @Pattern(regexp = "[A-Za-z0-9. -]{0,40}") String spec,
-        @NotNull @Pattern(regexp = "[A-Za-z0-9. -]{0,40}") String engine,
+        @NotNull @Pattern(regexp = "[A-Za-z0-9._ -]{0,40}") String spec,
+        @NotNull @Pattern(regexp = "[A-Za-z0-9._ -]{0,40}") String engine,
         boolean multiAz,
         @PositiveOrZero @Max(1_000) double count,
         @PositiveOrZero @Max(744) double hoursPerMonth,
