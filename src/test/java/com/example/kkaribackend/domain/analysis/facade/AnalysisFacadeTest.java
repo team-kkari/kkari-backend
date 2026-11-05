@@ -84,17 +84,24 @@ class AnalysisFacadeTest {
         Project registered = Project.builder().id(1L).answers(Map.of("트래픽", "평일 낮 집중", "DB", "MySQL")).build();
         registered.updateTerraform(new TerraformInfra(resources(), List.of(), Instant.EPOCH));
 
-        assertThat(facade.getInfraContext(registered)).contains("[Terraform]")
-            .startsWith("[고객 답변]\nDB: MySQL\n트래픽: 평일 낮 집중\n");
+        assertThat(facade.getInfraContext(registered)).startsWith("[Terraform]")
+            .endsWith("\n[고객 답변]\nDB: MySQL\n트래픽: 평일 낮 집중");
     }
 
     @Test
-    void 인프라_요약이_길면_고객_답변은_남기고_인프라_요약을_자른다() {
+    void 고객_답변만_있으면_답변_블록만_준다() {
+        Project registered = Project.builder().id(1L).answers(Map.of("DB", "MySQL")).build();
+        assertThat(facade.getInfraContext(registered)).isEqualTo("[고객 답변]\nDB: MySQL");
+    }
+
+    @Test
+    void 인프라_요약은_고객_답변과_별개로_4000자에서_자른다() {
         Project registered = Project.builder().id(1L).answers(Map.of("DB", "MySQL")).build();
         registered.updateTerraform(new TerraformInfra(Resources.builder().ec2(manyInstances()).build(), List.of(), Instant.EPOCH));
 
-        assertThat(facade.getInfraContext(registered)).hasSize(4000)
-            .startsWith("[고객 답변]\nDB: MySQL\n[Terraform]").endsWith("…(생략)");
+        String result = facade.getInfraContext(registered);
+        assertThat(result.substring(0, 4000)).startsWith("[Terraform]").endsWith("…(생략)");
+        assertThat(result.substring(4000)).isEqualTo("\n[고객 답변]\nDB: MySQL");
     }
 
     @Test
@@ -107,8 +114,9 @@ class AnalysisFacadeTest {
         registered.updateTerraform(new TerraformInfra(resources(), List.of(), Instant.EPOCH));
 
         String result = facade.getInfraContext(registered);
-        assertThat(result.indexOf("[Terraform]")).isEqualTo(2001);
-        assertThat(result.substring(0, 2000)).endsWith("…(생략)");
+        String answersBlock = result.substring(result.indexOf("[고객 답변]"));
+        assertThat(result).startsWith("[Terraform]");
+        assertThat(answersBlock).hasSize(2000).endsWith("…(생략)");
     }
 
     @Test

@@ -30,16 +30,15 @@ public class Project {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    // 고객이 등록한 서비스일 때 등록한 고객. 엔지니어가 직접 만든 프로젝트는 null
+    // 고객이 등록한 서비스에만 있다. 엔지니어가 직접 만든 프로젝트는 셋 다 null
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id")
     private User customer;
 
-    // 엔지니어가 직접 만든 프로젝트는 null
     @Column(length = 100)
     private String serviceName;
 
-    // 질문 → 답. 질문 목록이 아직 정해지지 않아 JSON 한 컬럼에 둔다. 엔지니어가 직접 만든 프로젝트는 null
+    // 질문 목록이 아직 정해지지 않아 JSON 한 컬럼에 둔다
     @JdbcTypeCode(SqlTypes.JSON)
     private Map<String, String> answers;
 

@@ -3,7 +3,7 @@ package com.example.kkaribackend.domain.project.presentation;
 import com.example.kkaribackend.domain.project.presentation.dto.request.RegisterServiceRequest;
 import com.example.kkaribackend.domain.project.presentation.dto.response.RegisterServiceResponse;
 import com.example.kkaribackend.domain.project.presentation.dto.response.ServiceListResponse;
-import com.example.kkaribackend.domain.project.presentation.dto.response.ServiceResponse;
+import com.example.kkaribackend.domain.project.presentation.dto.response.ServiceDetailResponse;
 import com.example.kkaribackend.domain.project.service.QueryCustomerProjectListService;
 import com.example.kkaribackend.domain.project.service.QueryCustomerProjectService;
 import com.example.kkaribackend.domain.project.service.RegisterCustomerProjectService;
@@ -41,7 +41,7 @@ public class CustomerProjectController {
 
     @Operation(summary = "내 서비스 상세")
     @GetMapping("/{serviceId}")
-    public ServiceResponse get(@PathVariable Long serviceId) {
+    public ServiceDetailResponse get(@PathVariable Long serviceId) {
         return queryCustomerProjectService.execute(serviceId);
     }
 }

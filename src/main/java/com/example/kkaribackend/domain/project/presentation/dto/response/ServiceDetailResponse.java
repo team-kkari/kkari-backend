@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 @Builder
-public record ServiceResponse(
+public record ServiceDetailResponse(
     Long serviceId,
     String serviceName,
     Map<String, String> answers,
@@ -16,8 +16,8 @@ public record ServiceResponse(
     ProjectStage stage,
     LocalDateTime createdAt
 ) {
-    public static ServiceResponse from(Project project) {
-        return ServiceResponse.builder()
+    public static ServiceDetailResponse from(Project project) {
+        return ServiceDetailResponse.builder()
             .serviceId(project.getId())
             .serviceName(project.getServiceName())
             .answers(project.getAnswers())

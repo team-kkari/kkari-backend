@@ -19,11 +19,12 @@ import java.util.TreeMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import static com.example.kkaribackend.global.util.TextTruncator.truncate;
+
 @Component
 @RequiredArgsConstructor
 public class AnalysisFacade {
     private static final int MAX_LENGTH = 4000;
-    private static final String OMITTED = "\n…(생략)";
     private static final List<String> KINDS = List.of("EC2", "EBS", "RDS", "S3", "LAMBDA", "ELB", "NAT");
 
     private final AnalysisJobRepository analysisJobRepository;
@@ -32,11 +33,6 @@ public class AnalysisFacade {
     @Transactional(readOnly = true)
     public String getInfraContext(Project project) {
         StringBuilder text = new StringBuilder();
-        // 고객 답변을 앞에 둬서 길이를 넘으면 인프라 요약이 잘린다
-        String answers = CustomerAnswersFormatter.describe(project.getAnswers());
-        if (!answers.isEmpty()) {
-            text.append(answers).append('\n');
-        }
         analysisJobRepository.findFirstByProjectIdAndTypeAndStatusOrderByIdDesc(project.getId(),
                 AnalysisJobType.ANALYSIS, AnalysisStatus.SUCCEEDED)
             .ifPresent(job -> appendSnapshot(text, objectMapper.readValue(job.getResult(), InfraSnapshot.class)));
@@ -47,15 +43,12 @@ public class AnalysisFacade {
             appendResources(text, terraform.resources());
             text.append("누락 항목: ").append(size(terraform.missing())).append("개\n");
         }
-        if (text.length() > MAX_LENGTH) {
-            int end = MAX_LENGTH - OMITTED.length();
-            // 보조 평면 문자를 중간에서 자르지 않는다
-            if (Character.isHighSurrogate(text.charAt(end - 1))) {
-                end--;
-            }
-            return text.substring(0, end) + OMITTED;
+        String infra = truncate(text, MAX_LENGTH);
+        String answers = CustomerAnswersFormatter.describe(project.getAnswers());
+        if (answers.isEmpty()) {
+            return infra;
         }
-        return text.toString();
+        return infra.isEmpty() ? answers : infra + "\n" + answers;
     }
 
     private void appendSnapshot(StringBuilder text, InfraSnapshot snapshot) {
