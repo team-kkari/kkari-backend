@@ -1,6 +1,11 @@
 package com.example.kkaribackend.global.ai;
 
 import com.example.kkaribackend.global.ai.dto.RecommendRequest;
+import com.example.kkaribackend.global.ai.dto.IntakeRequestDto;
+import com.example.kkaribackend.global.ai.dto.IntakeResponseDto;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.springframework.http.HttpStatus;
 import com.example.kkaribackend.global.ai.dto.RecommendResponse;
 import com.example.kkaribackend.global.ai.exception.AiErrorCode;
 import com.example.kkaribackend.global.ai.exception.AiServerException;
@@ -112,4 +117,58 @@ class AiServerClientTest {
             .isInstanceOf(AiServerException.class)
             .extracting("errorCode").isEqualTo(AiErrorCode.AI_SERVER_ERROR);
     }
+    @Test
+    void intake_요청은_snake_case이고_새_응답_필드는_무시한다() {
+        server.expect(requestTo("http://ai/intake"))
+            .andExpect(method(POST))
+            .andExpect(content().json("""
+                {"history":[{"role":"user","content":"안녕"}],"infra_context":"EC2 1대","session_id":"project-12"}
+                """, org.springframework.test.json.JsonCompareMode.STRICT))
+            .andRespond(withSuccess("""
+                {"reply":"질문","quick_replies":["예"],"profile":{"company_name":"고객사",
+                 "monthly_budget":3000000.0,"contains_personal_data":null,"frozen_resources":[],
+                 "currency":"KRW","change_tolerance":"허용","new_field":true},
+                 "missing":["고객사명"],"missing_fields":["company_name"],"ready":false,
+                 "recommend_request":{"infra":"EC2","constraints":{"monthly_budget":0}},"extra":true}
+                """, MediaType.APPLICATION_JSON));
+
+        IntakeResponseDto response = client.intake(new IntakeRequestDto(
+            List.of(new IntakeRequestDto.Message("user", "안녕")), "EC2 1대", "project-12", null));
+
+        assertThat(response.reply()).isEqualTo("질문");
+        assertThat(response.quickReplies()).containsExactly("예");
+        assertThat(response.profile().companyName()).isEqualTo("고객사");
+        assertThat(response.profile().monthlyBudget()).isEqualByComparingTo("3000000.0");
+        assertThat(response.profile().containsPersonalData()).isNull();
+        assertThat(response.profile().frozenResources()).isEmpty();
+        assertThat(response.profile().changeTolerance()).isEqualTo("허용");
+        assertThat(response.missing()).containsExactly("고객사명");
+        assertThat(response.missingFields()).containsExactly("company_name");
+        assertThat(response.ready()).isFalse();
+        assertThat(response.recommendRequest().get("infra").asString()).isEqualTo("EC2");
+        server.verify();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "500, '{\"retryable\":true}', AI_SERVER_UNAVAILABLE",
+        "503, '{\"retryable\":false}', AI_SERVER_ERROR",
+        "500, '{\"retryable\":false}', AI_SERVER_ERROR",
+        "503, '{}', AI_SERVER_ERROR",
+        "429, '{\"retryable\":false}', AI_SERVER_ERROR",
+        "429, not-json, AI_SERVER_UNAVAILABLE",
+        "503, not-json, AI_SERVER_UNAVAILABLE",
+        "500, not-json, AI_SERVER_ERROR",
+        "500, '{\"message\":\"legacy\"}', AI_SERVER_ERROR"
+    })
+    void 오류_본문과_상태로_재시도_가능_여부를_구분한다(int status, String body, AiErrorCode expected) {
+        server.expect(requestTo("http://ai/recommend"))
+            .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                .withStatus(HttpStatus.valueOf(status)).body(body).contentType(MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> client.recommend(REQUEST))
+            .isInstanceOf(AiServerException.class).extracting("errorCode").isEqualTo(expected);
+        server.verify();
+    }
+
 }
