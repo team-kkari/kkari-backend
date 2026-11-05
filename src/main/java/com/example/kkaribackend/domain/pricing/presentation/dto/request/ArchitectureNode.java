@@ -1,4 +1,4 @@
-package com.example.kkaribackend.global.aws.dto;
+package com.example.kkaribackend.domain.pricing.presentation.dto.request;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -37,6 +37,7 @@ public record ArchitectureNode(
         @PositiveOrZero @Max(1_000) double vcpu,
         @PositiveOrZero @Max(10_000) double memoryGb,
         @PositiveOrZero @Max(900_000) double durationMs,
+        // waf 는 규칙 수를 이 값으로 보낸다
         @PositiveOrZero @Max(10_000) double lcu
     ) {
     }

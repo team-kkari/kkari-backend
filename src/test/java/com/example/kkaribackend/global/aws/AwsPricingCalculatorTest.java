@@ -156,19 +156,18 @@ class AwsPricingCalculatorTest {
     }
 
     @Test
-    void 배치_호출이_실패해도_다음_배치를_계속하고_견적을_지운다() {
+    void 배치_호출이_실패하면_남은_배치는_보내지_않고_견적을_지운다() {
         when(client.batchCreateWorkloadEstimateUsage(any(BatchCreateWorkloadEstimateUsageRequest.class)))
-            .thenThrow(serviceException("ThrottlingException", 400))
-            .thenAnswer(invocation -> validItems(invocation.getArgument(0), 1.0));
+            .thenThrow(serviceException("ThrottlingException", 400));
         List<UsageLine> lines = IntStream.range(0, 26)
             .mapToObj(i -> new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730))
             .toList();
 
         List<LinePrice> prices = calculator.price(lines);
 
-        assertThat(prices.getFirst()).isEqualTo(LinePrice.callFailed("가격 계산 실패: ThrottlingException (HTTP 400)"));
-        assertThat(prices.get(24).monthlyUsd()).isNull();
-        assertThat(prices.get(25)).isEqualTo(LinePrice.priced(new BigDecimal("1.00")));
+        assertThat(prices).hasSize(26)
+            .containsOnly(LinePrice.callFailed("가격 계산 실패: ThrottlingException (HTTP 400)"));
+        verify(client).batchCreateWorkloadEstimateUsage(any(BatchCreateWorkloadEstimateUsageRequest.class));
         verify(client).deleteWorkloadEstimate(any(DeleteWorkloadEstimateRequest.class));
     }
 

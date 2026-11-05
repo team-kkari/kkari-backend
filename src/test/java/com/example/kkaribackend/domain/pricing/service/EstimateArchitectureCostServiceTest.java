@@ -1,10 +1,12 @@
-package com.example.kkaribackend.global.aws;
+package com.example.kkaribackend.domain.pricing.service;
 
+import com.example.kkaribackend.domain.pricing.presentation.dto.request.ArchitectureNode;
+import com.example.kkaribackend.domain.pricing.presentation.dto.request.ArchitectureNode.Pricing;
+import com.example.kkaribackend.domain.pricing.presentation.dto.request.EstimateCostRequest;
+import com.example.kkaribackend.domain.pricing.presentation.dto.response.CostReport;
+import com.example.kkaribackend.global.aws.AwsPricingCalculator;
 import com.example.kkaribackend.global.aws.AwsPricingCalculator.LinePrice;
 import com.example.kkaribackend.global.aws.AwsPricingCalculator.UsageLine;
-import com.example.kkaribackend.global.aws.dto.ArchitectureNode;
-import com.example.kkaribackend.global.aws.dto.ArchitectureNode.Pricing;
-import com.example.kkaribackend.global.aws.dto.CostReport;
 import com.example.kkaribackend.global.aws.exception.AwsErrorCode;
 import com.example.kkaribackend.global.aws.exception.AwsException;
 import org.assertj.core.groups.Tuple;
@@ -29,12 +31,12 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class ArchitectureCostEstimatorTest {
+class EstimateArchitectureCostServiceTest {
     private static final BigDecimal PRICE = new BigDecimal("1.25");
 
     private final List<UsageLine> sentLines = new ArrayList<>();
     private AwsPricingCalculator calculator;
-    private ArchitectureCostEstimator estimator;
+    private EstimateArchitectureCostService service;
     private Function<UsageLine, LinePrice> priceOf = line -> LinePrice.priced(PRICE);
 
     @BeforeEach
@@ -46,15 +48,15 @@ class ArchitectureCostEstimatorTest {
             sentLines.addAll(lines);
             return lines.stream().map(priceOf).toList();
         });
-        estimator = new ArchitectureCostEstimator(calculator);
+        service = new EstimateArchitectureCostService(calculator);
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("kinds")
     void kind별로_서울_리전_사용량_줄을_보낸다(String kind, Pricing pricing, List<Tuple> expected) {
-        CostReport report = estimator.estimate(List.of(node("n", pricing)));
+        CostReport report = estimate(node("n", pricing));
 
-        assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::usageType, UsageLine::operation,
+        assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::primaryUsageType, UsageLine::operation,
             UsageLine::amount).containsExactlyElementsOf(expected);
         assertThat(report.items().getFirst().monthlyUsd())
             .isEqualByComparingTo(PRICE.multiply(BigDecimal.valueOf(expected.size())));
@@ -128,9 +130,9 @@ class ArchitectureCostEstimatorTest {
 
     @Test
     void RDS_xlarge는_xl_이름도_후보로_보낸다() {
-        estimator.estimate(List.of(
+        estimate(
             node("db", pricing("rds").spec("db.r6g.xlarge").engine("MySQL").build()),
-            node("aurora", pricing("aurora").spec("db.r6g.2xlarge").engine("Aurora PostgreSQL").build())));
+            node("aurora", pricing("aurora").spec("db.r6g.2xlarge").engine("Aurora PostgreSQL").build()));
 
         assertThat(sentLines).extracting(UsageLine::usageTypes).contains(
             List.of("APN2-InstanceUsage:db.r6g.xlarge", "APN2-InstanceUsage:db.r6g.xl"),
@@ -138,31 +140,43 @@ class ArchitectureCostEstimatorTest {
     }
 
     @Test
-    void 꼭_필요한_사용량이_0이면_0달러가_아니라_추정_불가다() {
-        CostReport report = estimator.estimate(List.of(
+    void 사용량이_모두_0이거나_시간_요금의_시간이_0이면_0달러가_아니라_추정_불가다() {
+        CostReport report = estimate(
             node("web", pricing("ec2").spec("t3.micro").count(0).build()),
-            node("bucket", pricing("s3").storageGb(0).build())));
+            node("alb", pricing("alb").hoursPerMonth(0).build()),
+            node("bucket", pricing("s3").storageGb(0).build()),
+            node("egress", pricing("data_transfer_out").dataGbMonth(0).build()));
 
-        assertThat(report.items()).extracting(CostReport.Item::monthlyUsd, CostReport.Item::formula).containsExactly(
-            tuple(null, "사용량 0 — 추정 불가"),
+        assertThat(report.items()).extracting(CostReport.Item::monthlyUsd, CostReport.Item::formula).containsOnly(
             tuple(null, "사용량 0 — 추정 불가"));
-        assertThat(report.unpriced()).containsExactly("web 라벨", "bucket 라벨");
+        assertThat(report.unpriced()).containsExactly("web 라벨", "alb 라벨", "bucket 라벨", "egress 라벨");
+        assertThat(report.monthlyTotalUsd()).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(sentLines).isEmpty();
     }
 
     @Test
+    void 시간_요금이_없는_kind는_일부_사용량만_있어도_계산한다() {
+        CostReport report = estimate(
+            node("table", pricing("dynamodb").requestsMillionMonth(0).writeRequestsMillionMonth(0).build()),
+            node("dns", pricing("route53").count(0).build()));
+
+        assertThat(report.items()).extracting(CostReport.Item::monthlyUsd).doesNotContainNull();
+        assertThat(report.unpriced()).isEmpty();
+    }
+
+    @Test
     void 추정할_수_없는_구성요소는_null이고_합계에서_빠진다() {
-        priceOf = line -> line.usageType().contains("nope")
+        priceOf = line -> line.primaryUsageType().contains("nope")
             ? LinePrice.unpriced("가격 계산 실패: BAD_REQUEST") : LinePrice.priced(PRICE);
 
-        CostReport report = estimator.estimate(List.of(
+        CostReport report = estimate(
             node("users", pricing("free").build()),
             node("web", pricing("ec2").spec("t3.micro").storageGb(0).build()),
             node("bad-type", pricing("ec2").spec("nope.large").build()),
             node("s3", pricing("s3").spec("deep_archive").build()),
             node("db", pricing("rds").spec("db.t3.micro").engine("Oracle").build()),
             node("shield", pricing("unpriced").build()),
-            node("x", pricing("kinesis").build())));
+            node("x", pricing("kinesis").build()));
 
         assertThat(report.items()).extracting(CostReport.Item::nodeId, CostReport.Item::monthlyUsd,
             CostReport.Item::formula).containsExactly(
@@ -176,7 +190,7 @@ class ArchitectureCostEstimatorTest {
         assertThat(report.monthlyTotalUsd()).isEqualByComparingTo(PRICE);
         assertThat(report.unpriced()).containsExactly("bad-type 라벨", "s3 라벨", "db 라벨", "shield 라벨", "x 라벨");
         assertThat(report.assumptions()).hasSize(4).last().asString().startsWith("계산일 ");
-        assertThat(sentLines).extracting(UsageLine::usageType)
+        assertThat(sentLines).extracting(UsageLine::primaryUsageType)
             .containsExactly("APN2-BoxUsage:t3.micro", "APN2-BoxUsage:nope.large", "APN2-EBS:VolumeUsage.gp3");
     }
 
@@ -184,7 +198,7 @@ class ArchitectureCostEstimatorTest {
     void 가격_계산_호출이_실패하면_일부_결과_대신_502로_실패한다() {
         priceOf = line -> LinePrice.callFailed("가격 계산 실패: ThrottlingException (HTTP 400)");
 
-        assertThatThrownBy(() -> estimator.estimate(List.of(node("nat", pricing("nat_gateway").build()))))
+        assertThatThrownBy(() -> estimate(node("nat", pricing("nat_gateway").build())))
             .isInstanceOfSatisfying(AwsException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo(AwsErrorCode.AWS_REQUEST_FAILED));
     }
@@ -193,7 +207,7 @@ class ArchitectureCostEstimatorTest {
     void 가격_조회_키가_없으면_503으로_실패하고_API를_부르지_않는다() {
         when(calculator.isConfigured()).thenReturn(false);
 
-        assertThatThrownBy(() -> estimator.estimate(List.of(node("nat", pricing("nat_gateway").build()))))
+        assertThatThrownBy(() -> estimate(node("nat", pricing("nat_gateway").build())))
             .isInstanceOfSatisfying(AwsException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo(AwsErrorCode.AWS_CREDENTIALS_UNAVAILABLE));
         verify(calculator, never()).price(anyList());
@@ -209,6 +223,10 @@ class ArchitectureCostEstimatorTest {
             .count(2).hoursPerMonth(730).storageGb(100).dataGbMonth(50)
             .requestsMillionMonth(3).writeRequestsMillionMonth(4)
             .vcpu(1).memoryGb(2).durationMs(100).lcu(5);
+    }
+
+    private CostReport estimate(ArchitectureNode... nodes) {
+        return service.execute(new EstimateCostRequest(List.of(nodes)));
     }
 
     private static ArchitectureNode node(String id, Pricing pricing) {

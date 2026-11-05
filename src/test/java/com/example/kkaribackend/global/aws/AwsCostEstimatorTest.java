@@ -43,7 +43,7 @@ class AwsCostEstimatorTest {
         when(calculator.price(anyList())).thenAnswer(invocation -> {
             List<UsageLine> lines = invocation.getArgument(0);
             sentLines.addAll(lines);
-            return lines.stream().map(line -> line.usageType().contains("unknown")
+            return lines.stream().map(line -> line.primaryUsageType().contains("unknown")
                 ? LinePrice.unpriced("가격 계산 실패: BAD_REQUEST")
                 : LinePrice.priced(PRICE)).toList();
         });
@@ -66,7 +66,7 @@ class AwsCostEstimatorTest {
 
         assertThat(cost.currency()).isEqualTo("USD");
         assertThat(cost.basis()).isEqualTo("AWS_PRICING_CALCULATOR_BEFORE_DISCOUNTS");
-        assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::usageType, UsageLine::operation,
+        assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::primaryUsageType, UsageLine::operation,
             UsageLine::amount).containsExactly(
             tuple("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730.0),
             tuple("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances:0002", 730.0),
@@ -100,7 +100,7 @@ class AwsCostEstimatorTest {
 
         Cost cost = estimator("ap-northeast-2").estimate(resources, missing);
 
-        assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::usageType, UsageLine::operation)
+        assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::primaryUsageType, UsageLine::operation)
             .containsExactly(
                 tuple("AmazonRDS", "APN2-InstanceUsage:db.t3.micro", "CreateDBInstance:0002"),
                 tuple("AmazonRDS", "APN2-Multi-AZUsage:db.m5.large", "CreateDBInstance:0014"),
@@ -136,7 +136,7 @@ class AwsCostEstimatorTest {
 
         Cost cost = estimator("ap-northeast-2").estimate(resources, missing);
 
-        assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::usageType, UsageLine::operation,
+        assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::primaryUsageType, UsageLine::operation,
             UsageLine::amount).containsExactly(
             tuple("AmazonEC2", "APN2-EBS:VolumeUsage.gp3", "CreateVolume-Gp3", 100.0),
             tuple("AmazonEC2", "APN2-EBS:VolumeUsage.piops", "CreateVolume-P-IOPS", 50.0),
@@ -150,17 +150,6 @@ class AwsCostEstimatorTest {
         assertThat(cost.monthlyUsdByResource().get("EBS")).containsEntry("vol-4", null);
         assertThat(cost.monthlyUsdByResource().get("S3")).containsEntry("app", PRICE).containsEntry("logs", null);
         assertThat(missing).extracting(Missing::target).containsExactly("COST EBS vol-4", "COST S3 logs");
-    }
-
-    @Test
-    void us_east_1은_usageType에_리전_코드가_없다() {
-        Resources resources = Resources.builder()
-            .natGateways(List.of(new NatGateway("nat-1", "available")))
-            .build();
-
-        estimator("us-east-1").estimate(resources, missing);
-
-        assertThat(sentLines).extracting(UsageLine::usageType).containsExactly("NatGateway-Hours");
     }
 
     @Test

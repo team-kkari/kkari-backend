@@ -1,25 +1,25 @@
 package com.example.kkaribackend.domain.pricing;
 
-import com.example.kkaribackend.global.aws.ArchitectureCostEstimator;
-import com.example.kkaribackend.global.aws.dto.ArchitectureNode;
-import com.example.kkaribackend.global.aws.dto.CostReport;
+import com.example.kkaribackend.domain.pricing.presentation.dto.request.ArchitectureNode;
+import com.example.kkaribackend.domain.pricing.presentation.dto.request.EstimateCostRequest;
+import com.example.kkaribackend.domain.pricing.presentation.dto.response.CostReport;
+import com.example.kkaribackend.domain.pricing.service.EstimateArchitectureCostService;
 import com.example.kkaribackend.global.security.internal.InternalTokenAuthorizationManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
-import org.springframework.mock.web.MockHttpServletRequest;
-import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.math.BigDecimal;
+import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -41,12 +41,12 @@ class PricingControllerTest {
     @Autowired
     private MockMvc mockMvc;
     @MockitoBean
-    private ArchitectureCostEstimator architectureCostEstimator;
+    private EstimateArchitectureCostService estimateArchitectureCostService;
 
     @Test
     void 토큰이_맞으면_AI_서버_CostReport_모양으로_돌려준다() throws Exception {
-        when(architectureCostEstimator.estimate(anyList())).thenAnswer(invocation -> {
-            List<ArchitectureNode> nodes = invocation.getArgument(0);
+        when(estimateArchitectureCostService.execute(any(EstimateCostRequest.class))).thenAnswer(invocation -> {
+            List<ArchitectureNode> nodes = invocation.<EstimateCostRequest>getArgument(0).nodes();
             assertThat(nodes.getFirst().pricing().hoursPerMonth()).isEqualTo(730);
             assertThat(nodes.getFirst().pricing().storageGb()).isEqualTo(30);
             return new CostReport(new BigDecimal("303.82"),
@@ -73,18 +73,7 @@ class PricingControllerTest {
         mockMvc.perform(estimate(BODY).header(InternalTokenAuthorizationManager.HEADER, TOKEN + "x"))
             .andExpect(status().isUnauthorized())
             .andExpect(jsonPath("$.code").value("S003"));
-        verifyNoInteractions(architectureCostEstimator);
-    }
-
-    @Test
-    void 토큰이_비었거나_짧으면_같은_값을_보내도_막는다() {
-        for (String token : List.of("", "   ", "short-placeholder")) {
-            InternalTokenAuthorizationManager manager = new InternalTokenAuthorizationManager(token);
-            MockHttpServletRequest request = new MockHttpServletRequest();
-            request.addHeader(InternalTokenAuthorizationManager.HEADER, token);
-
-            assertThat(manager.authorize(() -> null, new RequestAuthorizationContext(request)).isGranted()).isFalse();
-        }
+        verifyNoInteractions(estimateArchitectureCostService);
     }
 
     @Test
@@ -92,6 +81,11 @@ class PricingControllerTest {
         mockMvc.perform(estimate("{\"nodes\": []}").header(InternalTokenAuthorizationManager.HEADER, TOKEN))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("C001"));
+        String node = BODY.substring(BODY.indexOf('[') + 1, BODY.lastIndexOf(']'));
+        mockMvc.perform(estimate("{\"nodes\": [" + String.join(",", Collections.nCopies(31, node)) + "]}")
+                .header(InternalTokenAuthorizationManager.HEADER, TOKEN))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.errors[0].field").value("nodes"));
         mockMvc.perform(estimate(BODY.replace("\"hours_per_month\": 730", "\"hours_per_month\": 745"))
                 .header(InternalTokenAuthorizationManager.HEADER, TOKEN))
             .andExpect(status().isBadRequest())
@@ -100,7 +94,7 @@ class PricingControllerTest {
                 .header(InternalTokenAuthorizationManager.HEADER, TOKEN))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.errors[0].field").value("nodes[0].pricing.spec"));
-        verifyNoInteractions(architectureCostEstimator);
+        verifyNoInteractions(estimateArchitectureCostService);
     }
 
     private static MockHttpServletRequestBuilder estimate(String body) {

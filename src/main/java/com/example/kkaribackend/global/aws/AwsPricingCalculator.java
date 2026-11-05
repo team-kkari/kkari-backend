@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -38,8 +39,8 @@ import java.util.function.Supplier;
  */
 @Slf4j
 @Component
-class AwsPricingCalculator {
-    static final int MAX_USAGE_PER_BATCH = 25;
+public class AwsPricingCalculator {
+    private static final int MAX_USAGE_PER_BATCH = 25;
     // 느린 응답이 요청 스레드와 분석 스레드를 오래 붙잡지 않게 한다
     private static final ClientOverrideConfiguration TIMEOUTS = ClientOverrideConfiguration.builder()
         .apiCallTimeout(Duration.ofSeconds(10))
@@ -74,7 +75,7 @@ class AwsPricingCalculator {
             .build();
     }
 
-    boolean isConfigured() {
+    public boolean isConfigured() {
         return client != null;
     }
 
@@ -87,29 +88,29 @@ class AwsPricingCalculator {
     }
 
     // usageTypes: 같은 요금의 이름 후보. 가격이 나온 첫 후보를 쓴다
-    record UsageLine(String serviceCode, List<String> usageTypes, String operation, double amount) {
-        UsageLine(String serviceCode, String usageType, String operation, double amount) {
+    public record UsageLine(String serviceCode, List<String> usageTypes, String operation, double amount) {
+        public UsageLine(String serviceCode, String usageType, String operation, double amount) {
             this(serviceCode, List.of(usageType), operation, amount);
         }
 
-        String usageType() {
+        public String primaryUsageType() {
             return usageTypes.getFirst();
         }
     }
 
-    enum Status { PRICED, UNPRICED, CALL_FAILED }
+    public enum Status { PRICED, UNPRICED, CALL_FAILED }
 
     // CALL_FAILED 는 줄이 아니라 API 호출이 실패한 것이라 다시 시도하면 값이 나올 수 있다
-    record LinePrice(Status status, BigDecimal monthlyUsd, String failure) {
-        static LinePrice priced(BigDecimal monthlyUsd) {
+    public record LinePrice(Status status, BigDecimal monthlyUsd, String failure) {
+        public static LinePrice priced(BigDecimal monthlyUsd) {
             return new LinePrice(Status.PRICED, monthlyUsd, null);
         }
 
-        static LinePrice unpriced(String failure) {
+        public static LinePrice unpriced(String failure) {
             return new LinePrice(Status.UNPRICED, null, failure);
         }
 
-        static LinePrice callFailed(String failure) {
+        public static LinePrice callFailed(String failure) {
             return new LinePrice(Status.CALL_FAILED, null, failure);
         }
     }
@@ -119,7 +120,7 @@ class AwsPricingCalculator {
     }
 
     // lines 와 같은 순서로 결과를 돌려준다. 실패해도 예외를 던지지 않고 모든 줄에 이유를 남긴다
-    List<LinePrice> price(List<UsageLine> lines) {
+    public List<LinePrice> price(List<UsageLine> lines) {
         List<Candidate> candidates = new ArrayList<>();
         List<List<Candidate>> candidatesByLine = new ArrayList<>();
         for (UsageLine line : lines) {
@@ -137,9 +138,13 @@ class AwsPricingCalculator {
 
     private static LinePrice best(List<Candidate> candidates, Map<String, LinePrice> prices) {
         List<LinePrice> results = candidates.stream().map(candidate -> prices.get(candidate.key())).toList();
-        return results.stream().filter(price -> price.status() == Status.PRICED).findFirst()
-            .or(() -> results.stream().filter(price -> price.status() == Status.CALL_FAILED).findFirst())
+        return firstWith(results, Status.PRICED)
+            .or(() -> firstWith(results, Status.CALL_FAILED))
             .orElse(results.getFirst());
+    }
+
+    private static Optional<LinePrice> firstWith(List<LinePrice> results, Status status) {
+        return results.stream().filter(price -> price.status() == status).findFirst();
     }
 
     private Map<String, LinePrice> priceCandidates(List<Candidate> candidates) {
@@ -162,7 +167,10 @@ class AwsPricingCalculator {
                 try {
                     prices.putAll(priceBatch(estimateId, account, batch));
                 } catch (RuntimeException e) {
-                    failAll(prices, batch, "가격 계산 실패: " + AwsFailures.reason(e));
+                    // 재시도까지 실패했으면 남은 배치도 실패할 가능성이 커서 더 보내지 않는다
+                    failAll(prices, candidates.subList(from, candidates.size()),
+                        "가격 계산 실패: " + AwsFailures.reason(e));
+                    break;
                 }
             }
             return prices;

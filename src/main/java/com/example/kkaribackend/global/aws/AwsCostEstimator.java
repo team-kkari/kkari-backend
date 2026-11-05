@@ -1,6 +1,7 @@
 package com.example.kkaribackend.global.aws;
 
 import com.example.kkaribackend.global.aws.AwsPricingCalculator.LinePrice;
+import com.example.kkaribackend.global.aws.AwsPricingCalculator.Status;
 import com.example.kkaribackend.global.aws.AwsPricingCalculator.UsageLine;
 import com.example.kkaribackend.global.aws.PricingCodes.EbsUsage;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Cost;
@@ -21,7 +22,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 import static com.example.kkaribackend.global.aws.PricingCodes.AMAZON_EC2;
 import static com.example.kkaribackend.global.aws.PricingCodes.AWS_ELB;
@@ -68,7 +69,8 @@ public class AwsCostEstimator {
         sheet.section("EBS", resources.ebs(), sheet::addEbs);
         sheet.section("RDS", resources.rds(), sheet::addRds);
         sheet.section("S3", resources.s3(), sheet::addS3);
-        sheet.section("LAMBDA", resources.lambda(), function -> sheet.set(function.functionName(), null));
+        sheet.section("LAMBDA", resources.lambda(),
+            (section, function) -> section.costs().put(function.functionName(), null));
         if (resources.lambda() != null && !resources.lambda().isEmpty()) {
             missing.add(new Missing("COST LAMBDA", "요청 수·실행 시간에 따라 달라져 추정하지 않습니다."));
         }
@@ -82,7 +84,10 @@ public class AwsCostEstimator {
         return new Cost("USD", "AWS_PRICING_CALCULATOR_BEFORE_DISCOUNTS", HOURS_PER_MONTH, FORMULAS, monthly);
     }
 
-    private record PricedResource(String type, String id, UsageLine line) {
+    private record Section(String type, Map<String, BigDecimal> costs) {
+    }
+
+    private record PricedResource(Section section, String id, UsageLine line) {
     }
 
     // 한 번의 estimate 호출에서만 쓰는 작업 공간. 호출끼리 공유하지 않는다
@@ -91,98 +96,94 @@ public class AwsCostEstimator {
         private final List<Missing> missing;
         private final Map<String, Map<String, BigDecimal>> monthly = new LinkedHashMap<>();
         private final List<PricedResource> priced = new ArrayList<>();
-        private String type;
 
         Sheet(String prefix, List<Missing> missing) {
             this.prefix = prefix;
             this.missing = missing;
         }
 
-        <T> void section(String type, List<T> resources, Consumer<T> add) {
+        <T> void section(String type, List<T> resources, BiConsumer<Section, T> add) {
             if (resources == null) {
                 return;
             }
-            this.type = type;
-            monthly.put(type, new LinkedHashMap<>());
-            resources.forEach(add);
+            Section section = new Section(type, new LinkedHashMap<>());
+            monthly.put(type, section.costs());
+            resources.forEach(resource -> add.accept(section, resource));
         }
 
-        void set(String id, BigDecimal monthlyUsd) {
-            monthly.get(type).put(id, monthlyUsd);
-        }
-
-        void unpriced(String id, String reason) {
-            set(id, null);
-            missing.add(new Missing("COST " + type + " " + id, reason));
+        void unpriced(Section section, String id, String reason) {
+            section.costs().put(id, null);
+            missing.add(new Missing("COST " + section.type() + " " + id, reason));
         }
 
         // 계산 결과가 오기 전까지 자리만 잡아 두어 리소스 순서를 유지한다
-        void addLine(String id, UsageLine line) {
-            set(id, null);
-            priced.add(new PricedResource(type, id, line));
+        void addLine(Section section, String id, UsageLine line) {
+            section.costs().put(id, null);
+            priced.add(new PricedResource(section, id, line));
         }
 
-        void addLine(String id, String serviceCode, String usageType, String operation, double amount) {
-            addLine(id, new UsageLine(serviceCode, prefix + usageType, operation, amount));
+        void addLine(Section section, String id, String serviceCode, String usageType, String operation,
+                     double amount) {
+            addLine(section, id, new UsageLine(serviceCode, prefix + usageType, operation, amount));
         }
 
-        void addEc2(Ec2Instance instance) {
+        void addEc2(Section section, Ec2Instance instance) {
             String operation = EC2_OPERATIONS.get(instance.platform());
             if ("stopped".equals(instance.state())) {
-                set(instance.instanceId(), BigDecimal.ZERO);
+                section.costs().put(instance.instanceId(), BigDecimal.ZERO);
             } else if (operation == null) {
-                unpriced(instance.instanceId(), "가격 계산을 지원하지 않는 플랫폼입니다: " + instance.platform());
+                unpriced(section, instance.instanceId(), "가격 계산을 지원하지 않는 플랫폼입니다: " + instance.platform());
             } else {
-                addLine(instance.instanceId(), AMAZON_EC2, "BoxUsage:" + instance.instanceType(), operation,
+                addLine(section, instance.instanceId(), AMAZON_EC2, "BoxUsage:" + instance.instanceType(), operation,
                     HOURS_PER_MONTH);
             }
         }
 
-        void addEbs(EbsVolume volume) {
+        void addEbs(Section section, EbsVolume volume) {
             EbsUsage usage = EBS_USAGES.get(volume.volumeType());
             if (usage == null) {
-                unpriced(volume.volumeId(), "가격 계산을 지원하지 않는 볼륨 타입입니다: " + volume.volumeType());
+                unpriced(section, volume.volumeId(), "가격 계산을 지원하지 않는 볼륨 타입입니다: " + volume.volumeType());
             } else if (volume.sizeGiB() == null) {
-                unpriced(volume.volumeId(), "볼륨 크기를 알 수 없습니다.");
+                unpriced(section, volume.volumeId(), "볼륨 크기를 알 수 없습니다.");
             } else {
-                addLine(volume.volumeId(), AMAZON_EC2, usage.usageType(), usage.operation(), volume.sizeGiB());
+                addLine(section, volume.volumeId(), AMAZON_EC2, usage.usageType(), usage.operation(), volume.sizeGiB());
             }
         }
 
         // Aurora 는 Multi-AZ 요금이 따로 없고 복제본도 인스턴스마다 따로 과금된다
-        void addRds(RdsInstance db) {
+        void addRds(Section section, RdsInstance db) {
             String operation = RDS_OPERATIONS.get(db.engine());
             if ("stopped".equals(db.status())) {
-                set(db.dbInstanceId(), BigDecimal.ZERO);
+                section.costs().put(db.dbInstanceId(), BigDecimal.ZERO);
             } else if (operation == null) {
-                unpriced(db.dbInstanceId(), "가격 계산을 지원하지 않는 엔진입니다: " + db.engine());
+                unpriced(section, db.dbInstanceId(), "가격 계산을 지원하지 않는 엔진입니다: " + db.engine());
             } else {
                 boolean multiAz = Boolean.TRUE.equals(db.multiAz()) && !db.engine().startsWith("aurora");
                 String deployment = multiAz ? "Multi-AZUsage:" : "InstanceUsage:";
-                addLine(db.dbInstanceId(),
+                addLine(section, db.dbInstanceId(),
                     PricingCodes.rdsInstance(prefix, deployment, db.instanceClass(), operation, HOURS_PER_MONTH));
             }
         }
 
-        void addS3(S3Bucket bucket) {
+        void addS3(Section section, S3Bucket bucket) {
             if (bucket.sizeBytes() == null) {
-                unpriced(bucket.name(), "버킷 크기를 알 수 없습니다.");
+                unpriced(section, bucket.name(), "버킷 크기를 알 수 없습니다.");
             } else {
-                addLine(bucket.name(), "AmazonS3", "TimedStorage-ByteHrs", "", bucket.sizeBytes() / BYTES_PER_GB);
+                addLine(section, bucket.name(), "AmazonS3", "TimedStorage-ByteHrs", "", bucket.sizeBytes() / BYTES_PER_GB);
             }
         }
 
-        void addLoadBalancer(LoadBalancer lb) {
+        void addLoadBalancer(Section section, LoadBalancer lb) {
             String operation = LB_OPERATIONS.get(lb.type());
             if (operation == null) {
-                unpriced(lb.name(), "가격 계산을 지원하지 않는 타입입니다: " + lb.type());
+                unpriced(section, lb.name(), "가격 계산을 지원하지 않는 타입입니다: " + lb.type());
             } else {
-                addLine(lb.name(), AWS_ELB, "LoadBalancerUsage", operation, HOURS_PER_MONTH);
+                addLine(section, lb.name(), AWS_ELB, "LoadBalancerUsage", operation, HOURS_PER_MONTH);
             }
         }
 
-        void addNatGateway(NatGateway nat) {
-            addLine(nat.natGatewayId(), AMAZON_EC2, "NatGateway-Hours", "NatGateway", HOURS_PER_MONTH);
+        void addNatGateway(Section section, NatGateway nat) {
+            addLine(section, nat.natGatewayId(), AMAZON_EC2, "NatGateway-Hours", "NatGateway", HOURS_PER_MONTH);
         }
 
         List<UsageLine> lines() {
@@ -193,9 +194,10 @@ public class AwsCostEstimator {
             for (int i = 0; i < priced.size(); i++) {
                 PricedResource resource = priced.get(i);
                 LinePrice price = prices.get(i);
-                monthly.get(resource.type()).put(resource.id(), price.monthlyUsd());
-                if (price.failure() != null) {
-                    missing.add(new Missing("COST " + resource.type() + " " + resource.id(), price.failure()));
+                resource.section().costs().put(resource.id(), price.monthlyUsd());
+                if (price.status() != Status.PRICED) {
+                    missing.add(new Missing("COST " + resource.section().type() + " " + resource.id(),
+                        price.failure()));
                 }
             }
         }

@@ -22,10 +22,14 @@ spring:
       file-size-threshold: 6MB
 
   # @Async 실행기. 인프라 분석은 AWS 호출이 많아 동시에 2개까지 돌리고 나머지는 큐에서 기다린다
+  # 종료할 때 진행 중인 분석이 임시 가격 견적을 지울 때까지 기다린 뒤 AWS 클라이언트를 닫는다
   task:
     execution:
       pool:
         core-size: 2
+      shutdown:
+        await-termination: true
+        await-termination-period: 30s
 
 # 크기를 조금 넘긴 업로드도 연결을 끊지 않고 413 응답을 받도록 남은 본문을 읽어 버린다
 server:

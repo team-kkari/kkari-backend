@@ -18,7 +18,7 @@ import java.util.function.Supplier;
 @Component
 public class InternalTokenAuthorizationManager implements AuthorizationManager<RequestAuthorizationContext> {
     public static final String HEADER = "X-Internal-Token";
-    static final int MIN_TOKEN_LENGTH = 32;
+    private static final int MIN_TOKEN_LENGTH = 32;
 
     private final byte[] token;
 

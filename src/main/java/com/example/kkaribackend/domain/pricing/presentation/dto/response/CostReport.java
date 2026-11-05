@@ -1,4 +1,4 @@
-package com.example.kkaribackend.global.aws.dto;
+package com.example.kkaribackend.domain.pricing.presentation.dto.response;
 
 import lombok.Builder;
 import tools.jackson.databind.PropertyNamingStrategies;
