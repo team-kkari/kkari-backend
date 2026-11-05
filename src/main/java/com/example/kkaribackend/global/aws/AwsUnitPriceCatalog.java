@@ -25,10 +25,12 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 사용량 줄마다 월 비용(USD)을 계산한다. 단가는 AWS Price List 에서 처음 쓸 때 받아 DB 에 두고,
@@ -39,6 +41,10 @@ import java.util.Optional;
 public class AwsUnitPriceCatalog {
     static final Duration PRICE_TTL = Duration.ofDays(30);
     static final Duration MAX_PRICE_AGE = PRICE_TTL.multipliedBy(3);
+    // 가격이 없는 이름을 요청마다 다시 묻지 않게 잠시 기억한다. AI 가 보낸 임의의 이름이 DB 에 쌓이지 않게 메모리에만 둔다
+    static final Duration UNPRICED_TTL = Duration.ofHours(1);
+    public static final String PRICE_BASIS =
+        "AWS Price List 온디맨드 단가 (DB 캐시, " + PRICE_TTL.toDays() + "일마다 갱신), 구간 요금 누적 계산";
     private static final String NO_PRICE = "AWS Price List 에 온디맨드 단가가 없습니다.";
     // 느린 응답이 요청 스레드와 분석 스레드를 오래 붙잡지 않게 한다
     private static final ClientOverrideConfiguration TIMEOUTS = ClientOverrideConfiguration.builder()
@@ -48,6 +54,7 @@ public class AwsUnitPriceCatalog {
 
     private final PricingClient client;
     private final UnitPriceRepository repository;
+    private final Map<PriceKey, Instant> unpricedUntil = new ConcurrentHashMap<>();
 
     @Autowired
     AwsUnitPriceCatalog(@Value("${aws.pricing.access-key}") String accessKey,
@@ -111,15 +118,18 @@ public class AwsUnitPriceCatalog {
     private record PriceKey(String serviceCode, String usageType, String operation) {
     }
 
-    // unitPrice 가 null 이면 조회에 실패한 것이고 failure 에 이유가 있다
-    private record Lookup(UnitPrice unitPrice, String failure) {
+    // unitPrice 가 없으면 failure 가 그 이유다
+    private record Lookup(UnitPrice unitPrice, LinePrice failure) {
+        static Lookup found(UnitPrice unitPrice) {
+            return new Lookup(unitPrice, null);
+        }
+
+        static Lookup failed(LinePrice failure) {
+            return new Lookup(null, failure);
+        }
+
         LinePrice price(double amount) {
-            if (unitPrice == null) {
-                return LinePrice.callFailed(failure);
-            }
-            return unitPrice.hasPrice()
-                ? LinePrice.priced(unitPrice.getUsageType(), unitPrice.cost(amount))
-                : LinePrice.unpriced(NO_PRICE);
+            return unitPrice != null ? LinePrice.priced(unitPrice.getUsageType(), unitPrice.cost(amount)) : failure;
         }
     }
 
@@ -156,45 +166,60 @@ public class AwsUnitPriceCatalog {
                 key.serviceCode(), key.usageType(), key.operation());
         } catch (DataAccessException e) {
             log.warn("저장된 단가 조회 실패: {}", key, e);
-            return new Lookup(null, "단가 조회 실패: " + AwsFailures.reason(e));
+            return Lookup.failed(LinePrice.callFailed("단가 조회 실패: " + AwsFailures.reason(e)));
         }
         if (cached.isPresent() && isFresh(cached.get())) {
-            return new Lookup(cached.get(), null);
+            return Lookup.found(cached.get());
         }
-        // 단가는 자주 바뀌지 않아, 새 단가를 받지 못했으면 실패로 끝내기보다 이전 단가를 쓴다
-        Optional<UnitPrice> fallback = cached.filter(AwsUnitPriceCatalog::isUsable);
 
-        UnitPrice fetched = null;
-        if (run.apiFailure == null) {
+        Optional<UnitPrice> fetched = Optional.empty();
+        boolean noPrice = isRecentlyUnpriced(key);
+        if (!noPrice && run.apiFailure == null) {
             try {
                 fetched = fetch(key);
+                noPrice = fetched.isEmpty();
+                if (noPrice) {
+                    rememberUnpriced(key);
+                }
             } catch (RuntimeException e) {
                 run.apiFailure = "단가 조회 실패: " + AwsFailures.reason(e);
                 log.warn("{}: {}", run.apiFailure, key);
             }
         }
-        if (fetched != null && fetched.hasPrice()) {
-            return new Lookup(save(cached, fetched), null);
+        if (fetched.isPresent()) {
+            return Lookup.found(save(key, cached, fetched.get()));
         }
+        // 단가는 자주 바뀌지 않아, 새 단가를 받지 못했으면 실패로 끝내기보다 이전 단가를 쓴다
+        Optional<UnitPrice> fallback = cached.filter(AwsUnitPriceCatalog::isUsable);
         if (fallback.isPresent()) {
             log.warn("새 단가를 받지 못해 이전 단가를 씁니다: {}", key);
-            return new Lookup(fallback.get(), null);
+            return Lookup.found(fallback.get());
         }
-        // 없다는 결과는 저장하지 않는다. AI 가 보낸 임의의 이름마다 행이 쌓이지 않게 한다
-        return fetched != null ? new Lookup(fetched, null) : new Lookup(null, run.apiFailure);
+        return Lookup.failed(noPrice ? LinePrice.unpriced(NO_PRICE) : LinePrice.callFailed(run.apiFailure));
     }
 
     private static boolean isFresh(UnitPrice price) {
-        return price.hasPrice() && price.getFetchedAt().plus(PRICE_TTL).isAfter(Instant.now());
+        return price.getFetchedAt().plus(PRICE_TTL).isAfter(Instant.now());
     }
 
     // 갱신이 계속 실패해도 너무 오래된 단가로 조용히 계산하지 않는다
     private static boolean isUsable(UnitPrice price) {
-        return price.hasPrice() && price.getFetchedAt().plus(MAX_PRICE_AGE).isAfter(Instant.now());
+        return price.getFetchedAt().plus(MAX_PRICE_AGE).isAfter(Instant.now());
+    }
+
+    private boolean isRecentlyUnpriced(PriceKey key) {
+        Instant until = unpricedUntil.get(key);
+        return until != null && until.isAfter(Instant.now());
+    }
+
+    private void rememberUnpriced(PriceKey key) {
+        Instant now = Instant.now();
+        unpricedUntil.values().removeIf(until -> !until.isAfter(now));
+        unpricedUntil.put(key, now.plus(UNPRICED_TTL));
     }
 
     // 다른 요청이 같은 단가를 동시에 처음 저장하면 유니크 제약으로 하나만 남는다. 받아 온 단가는 같으므로 그대로 쓴다
-    private UnitPrice save(Optional<UnitPrice> cached, UnitPrice fetched) {
+    private UnitPrice save(PriceKey key, Optional<UnitPrice> cached, UnitPrice fetched) {
         try {
             if (cached.isPresent()) {
                 cached.get().refresh(fetched);
@@ -202,15 +227,16 @@ public class AwsUnitPriceCatalog {
             }
             return repository.saveAndFlush(fetched);
         } catch (DataIntegrityViolationException e) {
-            log.info("다른 요청이 먼저 저장한 단가라 받아 온 값만 씁니다: {}", fetched.getUsageType());
+            log.info("다른 요청이 먼저 저장한 단가라 받아 온 값만 씁니다: {}", key);
             return fetched;
         } catch (DataAccessException e) {
-            log.warn("단가를 저장하지 못해 받아 온 값만 씁니다: {}", fetched.getUsageType(), e);
+            log.warn("단가를 저장하지 못해 받아 온 값만 씁니다: {}", key, e);
             return fetched;
         }
     }
 
-    private UnitPrice fetch(PriceKey key) {
+    // 호출이 실패하면 예외를 던지고, 받은 상품으로 단가를 하나로 정할 수 없으면 비어 있다
+    private Optional<UnitPrice> fetch(PriceKey key) {
         List<Filter> filters = new ArrayList<>();
         filters.add(termMatch("usagetype", key.usageType()));
         // 빈 값으로는 걸러지지 않아 operation 이 없는 요금은 usagetype 으로만 찾는다
@@ -221,37 +247,61 @@ public class AwsUnitPriceCatalog {
         GetProductsResponse response = client.getProducts(r -> r.serviceCode(key.serviceCode()).filters(filters)
             .maxResults(2));
         List<String> products = response.priceList();
-        List<Tier> tiers = List.of();
-        String unit = null;
+        if (products.isEmpty()) {
+            return Optional.empty();
+        }
         if (products.size() > 1 || response.nextToken() != null) {
             // 어느 상품이 맞는지 알 수 없으면 틀린 값을 내기보다 가격 없음으로 둔다
             log.warn("단가가 하나로 정해지지 않아 쓰지 않습니다: {}", key);
-        } else if (products.size() == 1) {
-            List<JsonNode> dimensions = onDemandDimensions(products.getFirst());
-            tiers = dimensions.stream().map(AwsUnitPriceCatalog::tier).toList();
-            unit = dimensions.isEmpty() ? null : dimensions.getFirst().path("unit").asString();
+            return Optional.empty();
         }
-        return UnitPrice.builder()
+        try {
+            return parse(key, products.getFirst());
+        } catch (RuntimeException e) {
+            log.warn("단가를 읽지 못해 쓰지 않습니다: {}", key, e);
+            return Optional.empty();
+        }
+    }
+
+    private static Optional<UnitPrice> parse(PriceKey key, String product) {
+        JsonNode onDemand = JsonMapper.shared().readTree(product).path("terms").path("OnDemand");
+        if (onDemand.size() != 1) {
+            log.warn("온디맨드 요금 조건이 {}개라 쓰지 않습니다: {}", onDemand.size(), key);
+            return Optional.empty();
+        }
+        List<JsonNode> dimensions = List.copyOf(onDemand.values().iterator().next().path("priceDimensions").values());
+        List<Tier> tiers = dimensions.stream().map(AwsUnitPriceCatalog::tier)
+            .sorted(Comparator.comparing(Tier::beginRange)).toList();
+        if (!coversEveryAmountOnce(tiers)) {
+            log.warn("요금 구간이 0부터 끝까지 이어지지 않아 쓰지 않습니다: {} {}", key, tiers);
+            return Optional.empty();
+        }
+        return Optional.of(UnitPrice.builder()
             .serviceCode(key.serviceCode())
             .usageType(key.usageType())
             .operation(key.operation())
-            .unit(unit)
+            .unit(dimensions.getFirst().path("unit").asString())
             .tiers(tiers)
             .fetchedAt(Instant.now())
-            .build();
+            .build());
+    }
+
+    // 구간이 겹치거나 비면 사용량이 두 번 계산되거나 빠진다
+    private static boolean coversEveryAmountOnce(List<Tier> tiers) {
+        if (tiers.isEmpty() || tiers.getFirst().beginRange().signum() != 0 || tiers.getLast().endRange() != null) {
+            return false;
+        }
+        for (int i = 1; i < tiers.size(); i++) {
+            BigDecimal previousEnd = tiers.get(i - 1).endRange();
+            if (previousEnd == null || previousEnd.compareTo(tiers.get(i).beginRange()) != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static Filter termMatch(String field, String value) {
         return Filter.builder().type(FilterType.TERM_MATCH).field(field).value(value).build();
-    }
-
-    private static List<JsonNode> onDemandDimensions(String product) {
-        JsonNode onDemand = JsonMapper.shared().readTree(product).path("terms").path("OnDemand");
-        if (onDemand.size() != 1) {
-            log.warn("온디맨드 요금 조건이 {}개라 쓰지 않습니다.", onDemand.size());
-            return List.of();
-        }
-        return List.copyOf(onDemand.values().iterator().next().path("priceDimensions").values());
     }
 
     private static Tier tier(JsonNode dimension) {

@@ -97,7 +97,7 @@ public class EstimateArchitectureCostService {
             .assumptions(List.of(
                 "서울 리전(ap-northeast-2) 온디맨드 기준",
                 "RI·Savings Plans·프리티어 미적용",
-                "AWS Price List 온디맨드 단가 (DB 캐시, 30일마다 갱신), 구간 요금 누적 계산",
+                AwsUnitPriceCatalog.PRICE_BASIS,
                 "계산일 " + LocalDate.now(KST)))
             .build();
     }

@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 
+import static com.example.kkaribackend.global.aws.AwsUnitPriceCatalog.PRICE_BASIS;
 import static com.example.kkaribackend.global.aws.PricingCodes.AMAZON_EC2;
 import static com.example.kkaribackend.global.aws.PricingCodes.AWS_ELB;
 import static com.example.kkaribackend.global.aws.PricingCodes.EBS_USAGE_TYPES;
@@ -37,7 +38,6 @@ import static com.example.kkaribackend.global.aws.PricingCodes.USAGE_TYPE_PREFIX
 public class AwsCostEstimator {
     private static final int HOURS_PER_MONTH = 730;
     private static final double BYTES_PER_GB = 1L << 30;
-    private static final String PRICE_BASIS = "AWS Price List 온디맨드 단가 (DB 캐시, 30일마다 갱신), 구간 요금 누적 계산";
     private static final Map<String, String> FORMULAS = formulas();
     private static final Map<String, String> EC2_OPERATIONS = Map.of(
         "Linux/UNIX", "RunInstances",

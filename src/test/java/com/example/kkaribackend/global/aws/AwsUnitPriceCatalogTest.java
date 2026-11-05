@@ -191,17 +191,51 @@ class AwsUnitPriceCatalogTest {
     }
 
     @Test
-    void 상품이_없거나_여러_개면_가격_없음이고_저장하지_않는다() {
+    void 상품이_없거나_여러_개면_가격_없음이고_저장하지_않고_다음_요청에서_다시_묻지_않는다() {
         products.put("APN2-BoxUsage:twice.large", List.of(
             product("Hrs", "0,Inf,0.1"), product("Hrs", "0,Inf,0.2")));
         UsageLine missing = new UsageLine("AmazonEC2", "APN2-BoxUsage:nope.large", "RunInstances", 730);
         UsageLine ambiguous = new UsageLine("AmazonEC2", "APN2-BoxUsage:twice.large", "RunInstances", 730);
 
         assertThat(catalog.price(List.of(missing, ambiguous))).containsOnly(NO_PRICE);
-        assertThat(catalog.price(List.of(missing))).containsOnly(NO_PRICE);
+        assertThat(catalog.price(List.of(missing, ambiguous))).containsOnly(NO_PRICE);
 
-        verify(client, times(3)).getProducts(any(GetProductsRequest.class));
+        verify(client, times(2)).getProducts(any(GetProductsRequest.class));
         verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void 상품을_읽지_못하면_가격_없음이고_남은_줄은_계속_찾는다() {
+        products.put("APN2-BoxUsage:bad.large", List.of(product("Hrs", "0,Inf,")));
+        products.put("APN2-BoxUsage:t3.micro", List.of(product("Hrs", "0,Inf,0.0130000000")));
+
+        List<LinePrice> prices = catalog.price(List.of(
+            new UsageLine("AmazonEC2", "APN2-BoxUsage:bad.large", "RunInstances", 730), T3_MICRO));
+
+        assertThat(prices).containsExactly(NO_PRICE, T3_MICRO_PRICE);
+    }
+
+    @Test
+    void 요금_구간이_겹치거나_비면_가격_없음이다() {
+        products.put("APN2-BoxUsage:twice.large", List.of(product("Hrs", "0,Inf,0.1", "0,Inf,0.2")));
+        products.put("APN2-BoxUsage:gap.large", List.of(product("Hrs", "0,100,0.1", "200,Inf,0.2")));
+
+        List<LinePrice> prices = catalog.price(List.of(
+            new UsageLine("AmazonEC2", "APN2-BoxUsage:twice.large", "RunInstances", 730),
+            new UsageLine("AmazonEC2", "APN2-BoxUsage:gap.large", "RunInstances", 730)));
+
+        assertThat(prices).containsOnly(NO_PRICE);
+    }
+
+    @Test
+    void 오래된_단가가_Price_List에서_사라져도_이전_단가를_쓰고_다음_요청에서_다시_묻지_않는다() {
+        cached("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", "0.0130",
+            AwsUnitPriceCatalog.PRICE_TTL.plusDays(1));
+
+        assertThat(catalog.price(List.of(T3_MICRO))).containsExactly(T3_MICRO_PRICE);
+        assertThat(catalog.price(List.of(T3_MICRO))).containsExactly(T3_MICRO_PRICE);
+
+        verify(client, times(1)).getProducts(any(GetProductsRequest.class));
     }
 
     @Test
@@ -303,7 +337,7 @@ class AwsUnitPriceCatalogTest {
     static String product(String unit, String... tiers) {
         StringBuilder dimensions = new StringBuilder();
         for (int i = 0; i < tiers.length; i++) {
-            String[] t = tiers[i].split(",");
+            String[] t = tiers[i].split(",", -1);
             dimensions.append(i == 0 ? "" : ",").append("""
                 "SKU.TERM.R%d": {"unit": "%s", "beginRange": "%s", "endRange": "%s", "pricePerUnit": {"USD": "%s"}}
                 """.formatted(i, unit, t[0], t[1], t[2]));
