@@ -2,8 +2,10 @@ package com.example.kkaribackend.domain.architecture;
 
 import com.example.kkaribackend.domain.analysis.domain.AnalysisJob;
 import com.example.kkaribackend.domain.analysis.domain.AnalysisStatus;
+import com.example.kkaribackend.domain.analysis.domain.AnalysisJobType;
 import com.example.kkaribackend.domain.analysis.domain.repository.AnalysisJobRepository;
 import com.example.kkaribackend.domain.project.domain.Project;
+import com.example.kkaribackend.domain.project.domain.Requirements;
 import com.example.kkaribackend.domain.project.domain.repository.ProjectRepository;
 import com.example.kkaribackend.domain.user.domain.Role;
 import com.example.kkaribackend.domain.user.domain.User;
@@ -25,6 +27,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import tools.jackson.databind.ObjectMapper;
+import java.time.OffsetDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -102,7 +105,10 @@ class ArchitectureFlowTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.jobId").value(jobId))
             .andExpect(jsonPath("$.generatedAt").isNotEmpty())
+            .andExpect(jsonPath("$.latestJob.jobId").value(jobId))
+            .andExpect(jsonPath("$.latestJob.status").value("SUCCEEDED"))
             .andReturn().getResponse().getContentAsString();
+        assertThat(OffsetDateTime.parse(objectMapper.readTree(architecture).get("generatedAt").asString())).isNotNull();
         assertThat(objectMapper.readTree(architecture).get("result")).isEqualTo(objectMapper.readTree(AI_RESPONSE));
 
         // 추천 아키텍처 작업은 분석 결과 조회에 섞이지 않는다
@@ -119,7 +125,66 @@ class ArchitectureFlowTest {
             .andExpect(jsonPath("$.code").value("AR001"));
         mockMvc.perform(get(url()).with(owner))
             .andExpect(status().isNotFound())
-            .andExpect(jsonPath("$.code").value("AR002"));
+            .andExpect(jsonPath("$.code").value("AR002"))
+            .andExpect(jsonPath("$.latestJob").hasJsonPath())
+            .andExpect(jsonPath("$.latestJob").isEmpty());
+    }
+
+    @Test
+    void 기존_미지원_통화는_작업을_만들거나_AI를_호출하기_전에_400으로_알린다() throws Exception {
+        saveSucceededAnalysis();
+        project.updateRequirements(Requirements.builder().content("기존 데이터").currency("JPY").build());
+        projectRepository.saveAndFlush(project);
+        long before = analysisJobRepository.count();
+        mockMvc.perform(post(url()).with(owner)).andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("AR003"));
+        assertThat(analysisJobRepository.count()).isEqualTo(before);
+        assertThat(projectRepository.findById(project.getId()).orElseThrow().getRequirements().currency()).isEqualTo("JPY");
+        org.mockito.Mockito.verifyNoInteractions(aiServerClient);
+    }
+
+    @Test
+    void 성공_결과가_없어도_대기_실행_실패한_최근_설계_작업을_404에서_복원한다() throws Exception {
+        for (AnalysisStatus state : new AnalysisStatus[]{AnalysisStatus.QUEUED, AnalysisStatus.RUNNING, AnalysisStatus.FAILED}) {
+            AnalysisJob job = AnalysisJob.builder().project(project).type(AnalysisJobType.ARCHITECTURE).build();
+            if (state == AnalysisStatus.RUNNING) job.start();
+            if (state == AnalysisStatus.FAILED) job.fail("AI 서버 응답 지연");
+            analysisJobRepository.saveAndFlush(job);
+            // 더 최신인 인프라 분석은 latestJob에 섞이지 않는다.
+            saveSucceededAnalysis();
+            mockMvc.perform(get(url()).with(owner)).andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("AR002"))
+                .andExpect(jsonPath("$.latestJob.jobId").value(job.getId()))
+                .andExpect(jsonPath("$.latestJob.status").value(state.name()))
+                .andExpect(jsonPath("$.latestJob.failureReason").value(job.getFailureReason()));
+        }
+    }
+
+    @Test
+    void 이후_작업이_실패해도_이전_성공_결과와_최근_실패_작업을_함께_돌려준다() throws Exception {
+        AnalysisJob succeeded = AnalysisJob.builder().project(project).type(AnalysisJobType.ARCHITECTURE).build();
+        succeeded.succeed(AI_RESPONSE);
+        analysisJobRepository.saveAndFlush(succeeded);
+        AnalysisJob failed = AnalysisJob.builder().project(project).type(AnalysisJobType.ARCHITECTURE).build();
+        failed.fail("생성 실패");
+        analysisJobRepository.saveAndFlush(failed);
+        mockMvc.perform(get(url()).with(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.jobId").value(succeeded.getId()))
+            .andExpect(jsonPath("$.result.overall").value("요약"))
+            .andExpect(jsonPath("$.latestJob.jobId").value(failed.getId()))
+            .andExpect(jsonPath("$.latestJob.status").value("FAILED"))
+            .andExpect(jsonPath("$.latestJob.failureReason").value("생성 실패"));
+    }
+
+    @Test
+    void 다른_담당자와_없는_프로젝트에는_설계_작업을_노출하지_않는다() throws Exception {
+        User other = userRepository.save(User.builder().email("other-query@a.com").password("pw").name("다른 담당자")
+            .companyName("MSP").role(Role.MSP_ENGINEER).build());
+        mockMvc.perform(get(url()).with(loginAs(other.getId()))).andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("P002"))
+            .andExpect(jsonPath("$.latestJob").doesNotHaveJsonPath());
+        mockMvc.perform(get("/v1/projects/9223372036854775807/architectures").with(owner)).andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.code").value("P001"));
     }
 
     @Test
