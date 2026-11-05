@@ -1,6 +1,6 @@
 # 해커톤 지원 서버 정보 (2조)
 
-> 이 문서는 public 레포에 올라가므로 서버 공인 IP와 AWS 계정 ID를 `<...>`로 가렸다. 실제 값은 Notion 참고.
+> 이 문서는 public 레포에 올라가므로 서버 공인 IP, AWS 계정 ID, Role·버킷·키 파일 이름을 `<...>`로 가렸다. 실제 값은 Notion 참고.
 
 - 확인일: 2026-11-05
 - 확인 방법: SSH 접속 후 읽기 전용 명령으로 확인 (서버에 설치·변경 없음)
@@ -14,13 +14,13 @@
 | 공인 IP | `<서버 공인 IP>` |
 | 리전 | 도쿄 `ap-northeast-1` |
 | 사용자 | `ubuntu` (sudo 가능) |
-| 인증 | 키 파일 `hackathon-e3-t02.pem` 만 사용 (비밀번호 로그인 없음) |
+| 인증 | 키 파일 `<키 파일>.pem` 만 사용 (비밀번호 로그인 없음) |
 
 Mac/Linux 접속:
 
 ```bash
-chmod 400 hackathon-e3-t02.pem        # 권한이 넓으면 접속이 거부된다
-ssh -i hackathon-e3-t02.pem ubuntu@<서버 공인 IP>
+chmod 400 <키 파일>.pem        # 권한이 넓으면 접속이 거부된다
+ssh -i <키 파일>.pem ubuntu@<서버 공인 IP>
 ```
 
 ## 2. 서버 사양
@@ -58,12 +58,12 @@ ssh -i hackathon-e3-t02.pem ubuntu@<서버 공인 IP>
 | 항목 | 값 |
 |---|---|
 | AWS 계정 ID | `<해커톤 계정 ID>` |
-| 인스턴스 Role | `hackathon-e3-t02-ec2-role` |
-| 인스턴스 프로파일 | `hackathon-e3-t02-ec2-profile` |
+| 인스턴스 Role | `<인스턴스 Role 이름>` |
+| 인스턴스 프로파일 | `<인스턴스 프로파일 이름>` |
 
 | 서비스 | 결과 |
 |---|---|
-| S3 `hackathon-e3-t02-data` (ap-northeast-1) | 목록 조회 성공 (비어 있음). 쓰기·삭제는 미확인 |
+| S3 `<S3 버킷 이름>` (ap-northeast-1) | 목록 조회 성공 (비어 있음). 쓰기·삭제는 미확인 |
 | IAM (정책 조회) | 거부 |
 | Pricing API | 거부 |
 | CloudWatch | 거부 |
@@ -73,7 +73,7 @@ ssh -i hackathon-e3-t02.pem ubuntu@<서버 공인 IP>
 
 ## 6. 파일 저장소 (S3)
 
-- 버킷: `hackathon-e3-t02-data` (하나만 제공)
+- 버킷: `<S3 버킷 이름>` (하나만 제공)
 - 폴더로 나눠 사용: `uploads/`, `data/`, `outputs/`
 
 ## 7. 알아둘 점
