@@ -4,6 +4,9 @@
 # - postgres 는 호스트 포트를 공개하지 않는다 (외부 포트가 전부 열려 있는 서버이므로).
 # - web(nginx)이 80 으로 프론트 정적 파일을 서빙하고 /v1/ 요청을 backend 로 넘긴다.
 # - backend 는 8080 으로도 직접 공개한다 (배포 확인용. 프론트 연동이 끝나면 닫아도 된다).
+# - AI 서버(kkari-AI)는 아직 컨테이너화 전이다. 준비되면 이 파일에 ai 서비스를 추가한다.
+#   AI 서버는 /v1/internal/** 을 공개 IP 가 아니라 이 compose 네트워크(http://backend:8080)로 불러야
+#   X-Internal-Token 이 평문으로 외부를 지나지 않는다.
 # - ai(kkari-AI)는 호스트 포트 없이 도커 내부망으로만 쓴다. 이 파일에 없으면 deploy.sh 의 --remove-orphans 가
 #   실행 중인 ai 컨테이너를 지우므로, 서버 전용 compose.ai.yaml 을 따로 두지 말고 이 파일 하나로 관리한다.
 #
@@ -49,6 +52,10 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS 가 필요하다}
       AI_SERVER_URL: ${AI_SERVER_URL:-http://ai:8000}
       AWS_REGION: ${AWS_REGION:-ap-northeast-1}
+      # 비어 있으면 /v1/internal/** 은 모두 막히고, 가격 키가 비어 있으면 예상 비용 없이 분석한다
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      PRICING_AWS_ACCESS_KEY_ID: ${PRICING_AWS_ACCESS_KEY_ID:-}
+      PRICING_AWS_SECRET_ACCESS_KEY: ${PRICING_AWS_SECRET_ACCESS_KEY:-}
       JPA_DDL_AUTO: ${JPA_DDL_AUTO:-update}
       SWAGGER_ENABLED: ${SWAGGER_ENABLED:-true}
     healthcheck:

@@ -7,6 +7,7 @@ import com.example.kkaribackend.global.aws.dto.InfraSnapshot;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.*;
 import com.example.kkaribackend.global.terraform.dto.TerraformInfra;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
 import java.util.HashMap;
@@ -15,8 +16,19 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ArchitectureInputFactoryTest {
+    @Test
+    void 기존에_저장된_미지원_통화도_AI_작업_전_명확한_입력_오류로_거절한다() {
+        for (String currency : new String[]{"JPY", "EUR", null}) {
+            var requirements = Requirements.builder().monthlyBudget(BigDecimal.TEN).currency(currency).build();
+            assertThatThrownBy(() -> ArchitectureInputFactory.create(InfraSnapshot.builder().build(), null, requirements, null, 3))
+                .isInstanceOf(com.example.kkaribackend.global.error.exception.KkariException.class)
+                .satisfies(error -> assertThat(((com.example.kkaribackend.global.error.exception.KkariException) error)
+                    .getErrorCode().getCode()).isEqualTo("AR003"));
+        }
+    }
 
     @Test
     void 분석_결과와_Terraform과_요구사항으로_입력을_만든다() {
@@ -78,6 +90,11 @@ class ArchitectureInputFactoryTest {
             변경 금지 리소스: prod-rds, logs""");
         assertThat(request.priorities()).containsExactly("security", "cost");
         assertThat(request.count()).isEqualTo(3);
+        assertThat(request.currentMonthlyUsd()).isNull(); // NAT 비용을 모르는 부분 합은 보내지 않는다
+        assertThat(request.constraints().get("monthly_budget").decimalValue()).isEqualByComparingTo("1500.50");
+        assertThat(request.constraints().get("currency").asString()).isEqualTo("USD");
+        assertThat(request.constraints().get("contains_personal_data").asBoolean()).isTrue();
+        assertThat(request.constraints().get("frozen_resources")).isEqualTo(JsonMapper.shared().readTree("[\"prod-rds\",\"logs\"]"));
     }
 
     @Test
@@ -93,6 +110,44 @@ class ArchitectureInputFactoryTest {
         assertThat(request.infra()).isEqualTo("[AWS]\nEC2 i-1: t3.micro");
         assertThat(request.goal()).isEmpty();
         assertThat(request.priorities()).isEmpty();
+        assertThat(request.constraints()).isNull();
+        assertThat(request.currentMonthlyUsd()).isNull();
+    }
+
+    @Test
+    void 양수인_분석_비용_합을_AI_계약의_snake_case로_보낸다() {
+        InfraSnapshot snapshot = InfraSnapshot.builder().cost(new Cost("USD", "AWS_PRICE_LIST_ON_DEMAND", 730, Map.of(),
+            Map.of("EC2", Map.of("i-1", new BigDecimal("7.592")), "EBS", Map.of("vol-1", new BigDecimal("8")))))
+            .build();
+        Requirements requirements = Requirements.builder().monthlyBudget(new BigDecimal("1000000"))
+            .currency("KRW").containsPersonalData(true).frozenResources(List.of("prod-rds")).build();
+        var request = ArchitectureInputFactory.create(snapshot, null, requirements, null, 5);
+        var json = JsonMapper.shared().valueToTree(request);
+
+        assertThat(request.currentMonthlyUsd()).isEqualByComparingTo("15.592");
+        assertThat(json.get("current_monthly_usd").decimalValue()).isEqualByComparingTo("15.592");
+        assertThat(json.has("currentMonthlyUsd")).isFalse();
+        assertThat(json.get("constraints").get("currency").asString()).isEqualTo("KRW");
+        assertThat(json.get("constraints").get("frozen_resources").get(0).asString()).isEqualTo("prod-rds");
+    }
+
+    @Test
+    void 정형_제약의_null_0_false_빈_목록을_보존하고_0인_현재_비용은_생략한다() {
+        Requirements requirements = Requirements.builder().monthlyBudget(BigDecimal.ZERO)
+            .containsPersonalData(false).frozenResources(List.of()).build();
+        InfraSnapshot snapshot = InfraSnapshot.builder().cost(new Cost("USD", "ON_DEMAND", 730, Map.of(),
+            Map.of("EC2", Map.of("i-1", BigDecimal.ZERO)))).build();
+        var request = ArchitectureInputFactory.create(snapshot, null, requirements, null, 5);
+        var json = JsonMapper.shared().valueToTree(request);
+        assertThat(json.has("current_monthly_usd")).isFalse();
+        assertThat(json.get("constraints").get("monthly_budget").decimalValue()).isEqualByComparingTo("0");
+        assertThat(json.get("constraints").get("currency").isNull()).isTrue();
+        assertThat(json.get("constraints").get("contains_personal_data").asBoolean()).isFalse();
+        assertThat(json.get("constraints").get("frozen_resources").isArray()).isTrue();
+        assertThat(json.get("constraints").get("frozen_resources").isEmpty()).isTrue();
+        var unknown = ArchitectureInputFactory.create(snapshot, null, Requirements.builder().build(), null, 5).constraints();
+        assertThat(unknown.get("monthly_budget").isNull()).isTrue();
+        assertThat(unknown.get("frozen_resources").isNull()).isTrue();
     }
 
     @Test

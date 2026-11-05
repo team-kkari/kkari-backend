@@ -51,6 +51,15 @@ public class TerraformStateParserTest {
         assertThat(terraform.missing()).extracting(Missing::target).containsExactly("STRUCTURE TERRAFORM");
         assertThat(terraform.missing().getFirst().reason()).contains("1개", "aws_iam_role").doesNotContain("aws_ami");
         assertThat(objectMapper.writeValueAsString(terraform)).doesNotContain(SECRET, "admin");
+        assertThat(terraform.fileName()).isEqualTo("terraform.tfstate");
+        assertThat(terraform.size()).isEqualTo(file(STATE).getSize());
+    }
+
+    @Test
+    void 업로드_파일의_로컬_경로는_저장하지_않는다() {
+        TerraformInfra terraform = parser.parse(new MockMultipartFile("file", "C:\\fakepath\\infra.tfstate", "application/json",
+            STATE.getBytes(StandardCharsets.UTF_8)));
+        assertThat(terraform.fileName()).isEqualTo("infra.tfstate");
     }
 
     @Test
