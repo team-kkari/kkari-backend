@@ -626,6 +626,23 @@ class AiServerClientTest {
             .doesNotContain("PK-ZIP-CONTENT");
     }
 
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void AI_CALL_로그가_본문을_읽다_끊겨도_오류_분류는_그대로이다(CapturedOutput output) {
+        Duration limit = Duration.ofMillis(300);
+        AiServerClient slowClient = client(new AiServerClient.Timeouts(limit, limit, limit, limit, limit));
+        replies.add(new Reply(200, Map.of("Content-Type", "application/json"), Duration.ZERO,
+            List.of(line("{\"architectures\":"), line("[]}")), index -> {
+                if (index == 1) {
+                    sleep(1_000);
+                }
+            }));
+
+        assertError(() -> slowClient.architectures(ARCHITECTURE_REQUEST), AiErrorCode.AI_SERVER_ERROR);
+        assertThat(aiCallLog(output, "ai_call POST /architectures")).contains("status=200", "error=IOException");
+        assertThat(requests).hasSize(1);
+    }
+
     private static List<String> aiCallLogs(CapturedOutput output) {
         return output.getAll().lines().filter(line -> line.contains(" AI_CALL ")).toList();
     }

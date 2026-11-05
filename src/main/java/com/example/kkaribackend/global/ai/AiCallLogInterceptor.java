@@ -28,8 +28,7 @@ class AiCallLogInterceptor implements ClientHttpRequestInterceptor {
     static final String ATTEMPT = AiCallLogInterceptor.class.getName() + ".attempt";
     static final String MAX_ATTEMPTS = AiCallLogInterceptor.class.getName() + ".maxAttempts";
     static final String FILES = AiCallLogInterceptor.class.getName() + ".files";
-
-    private static final MediaType NDJSON = MediaType.parseMediaType("application/x-ndjson");
+    static final String STREAM = AiCallLogInterceptor.class.getName() + ".stream";
 
     @Override
     public ClientHttpResponse intercept(HttpRequest request, byte[] body, ClientHttpRequestExecution execution)
@@ -45,9 +44,8 @@ class AiCallLogInterceptor implements ClientHttpRequestInterceptor {
             throw e;
         }
         HttpStatusCode status = response.getStatusCode();
-        MediaType contentType = response.getHeaders().getContentType();
         // 스트림은 모으지 않는다. 요약은 AiServerClient.chat 이 끝날 때 남긴다
-        if (status.is2xxSuccessful() && contentType != null && NDJSON.isCompatibleWith(contentType)) {
+        if (status.is2xxSuccessful() && Boolean.TRUE.equals(request.getAttributes().get(STREAM))) {
             AI_CALL.info("ai_call {} {} status={} duration_ms={} response=stream", head(request), requestLog,
                 status.value(), millisSince(startedAt));
             return response;
@@ -56,15 +54,15 @@ class AiCallLogInterceptor implements ClientHttpRequestInterceptor {
         try {
             responseBody = response.getBody().readAllBytes();
         } catch (IOException e) {
-            response.close();
             AI_CALL.info("ai_call {} {} status={} error={} duration_ms={}", head(request), requestLog, status.value(),
                 e.getClass().getSimpleName(), millisSince(startedAt));
-            throw e;
+            // 로그가 없을 때처럼 본문을 읽는 쪽에서 실패하도록 넘긴다
+            return new BufferedResponse(response, null, e);
         }
         AI_CALL.info("ai_call {} {} status={}{} duration_ms={} response_bytes={} {}", head(request), requestLog,
             status.value(), aiError(status, responseBody), millisSince(startedAt), responseBody.length,
             responseLog(response.getHeaders(), responseBody));
-        return new BufferedResponse(response, responseBody);
+        return new BufferedResponse(response, responseBody, null);
     }
 
     private static String head(HttpRequest request) {
@@ -132,7 +130,8 @@ class AiCallLogInterceptor implements ClientHttpRequestInterceptor {
         return (System.nanoTime() - startedAt) / 1_000_000;
     }
 
-    private record BufferedResponse(ClientHttpResponse delegate, byte[] body) implements ClientHttpResponse {
+    private record BufferedResponse(ClientHttpResponse delegate, byte[] body, IOException readFailure)
+        implements ClientHttpResponse {
 
         @Override
         public HttpStatusCode getStatusCode() throws IOException {
@@ -150,7 +149,10 @@ class AiCallLogInterceptor implements ClientHttpRequestInterceptor {
         }
 
         @Override
-        public InputStream getBody() {
+        public InputStream getBody() throws IOException {
+            if (readFailure != null) {
+                throw readFailure;
+            }
             return new ByteArrayInputStream(body);
         }
 

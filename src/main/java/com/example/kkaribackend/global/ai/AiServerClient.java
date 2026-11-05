@@ -209,6 +209,7 @@ public class AiServerClient {
             call("/chat", attempt -> {
                 long sentAt = System.nanoTime();
                 return post(conversationClient, "/chat", attempt)
+                    .attribute(AiCallLogInterceptor.STREAM, true)
                     .body(request)
                     .exchange((httpRequest, response) -> {
                         if (response.getStatusCode().isError()) {
