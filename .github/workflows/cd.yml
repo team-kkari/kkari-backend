@@ -1,0 +1,87 @@
+name: CD
+
+# main 에 push 되면 이미지를 빌드해 GHCR 에 올리고 EC2 에 배포한다.
+# 수동 실행(workflow_dispatch)도 가능하다.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 서버가 1대라 배포는 한 번에 하나만 돌린다. 진행 중인 배포는 끊지 않는다.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  SSH_USER: ubuntu
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Configure SSH
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Upload deploy files
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          scp -i ~/.ssh/id_deploy -o BatchMode=yes \
+            infra/deploy/compose.prod.yaml infra/deploy/deploy.sh \
+            "$SSH_USER@$EC2_HOST:~/kkari/"
+
+      - name: Deploy
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          DEPLOY_IMAGE: ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+        run: |
+          SSH=(ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$SSH_USER@$EC2_HOST")
+          # 이 잡이 끝나면 만료되는 토큰으로 로그인해 이미지를 받고, 끝나면 로그아웃한다 (서버에 장기 토큰을 두지 않는다)
+          printf '%s' "$GHCR_TOKEN" | "${SSH[@]}" "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
+          "${SSH[@]}" "chmod +x ~/kkari/deploy.sh && ~/kkari/deploy.sh '$DEPLOY_IMAGE'"
+
+      - name: Cleanup
+        if: always()
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes "$SSH_USER@$EC2_HOST" "docker logout ghcr.io" || true
+          rm -f ~/.ssh/id_deploy

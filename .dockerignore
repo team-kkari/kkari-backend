@@ -1,0 +1,14 @@
+.git
+.github
+.gradle
+build
+.idea
+.vscode
+*.iml
+.env
+*.pem
+infra
+docs
+CLAUDE.md
+HELP.md
+compose.yaml

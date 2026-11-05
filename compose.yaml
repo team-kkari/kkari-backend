@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: kkari
+      POSTGRES_USER: kkari
+      POSTGRES_PASSWORD: kkari
+    ports:
+      - "5432:5432"
+    volumes:
+      - kkari-postgres:/var/lib/postgresql/data
+
+volumes:
+  kkari-postgres:

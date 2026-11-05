@@ -1,3 +1,63 @@
 spring:
   application:
     name: kkari-backend
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/kkari}
+    username: ${DB_USERNAME:kkari}
+    password: ${DB_PASSWORD:kkari}
+
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:update}
+    open-in-view: false
+    show-sql: ${JPA_SHOW_SQL:false}
+
+  # Terraform state 업로드 크기 제한. 넘으면 413(C007)
+  # state 에 민감한 값이 있을 수 있어 임시 파일로 디스크에 쓰지 않도록 threshold 를 최대 크기보다 크게 둔다
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB # multipart 경계·헤더 여유
+      file-size-threshold: 6MB
+
+  # @Async 실행기. 인프라 분석은 AWS 호출이 많아 동시에 2개까지 돌리고 나머지는 큐에서 기다린다
+  task:
+    execution:
+      pool:
+        core-size: 2
+
+# 크기를 조금 넘긴 업로드도 연결을 끊지 않고 413 응답을 받도록 남은 본문을 읽어 버린다
+server:
+  tomcat:
+    max-swallow-size: 10MB
+
+springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:true}
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:true}
+    tags-sorter: alpha
+    persist-authorization: true
+    operations-sorter: method
+  default-produces-media-type: application/json
+  override-with-generic-response: false
+
+jwt:
+  header: ${JWT_HEADER:Authorization}
+  prefix: ${JWT_PREFIX:Bearer }
+  secret: ${JWT_SECRET}
+  access-exp: ${JWT_ACCESS_EXP:3600}
+
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+
+aws:
+  region: ${AWS_REGION:ap-northeast-2}
+  # Price List API 전용 계정 키. 비어 있으면 예상 비용 없이 분석한다
+  pricing:
+    access-key: ${PRICING_AWS_ACCESS_KEY_ID:}
+    secret-key: ${PRICING_AWS_SECRET_ACCESS_KEY:}
+
+ai-server:
+  url: ${AI_SERVER_URL:http://localhost:8000}

@@ -38,3 +38,15 @@ out/
 
 ### env ###
 .env
+
+### terraform / secrets ###
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+crash.log
+*.pem
+
+### local-only instructions (contain account ids) ###
+CLAUDE.md
