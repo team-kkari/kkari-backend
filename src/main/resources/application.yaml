@@ -54,7 +54,8 @@ cors:
 
 aws:
   region: ${AWS_REGION:ap-northeast-2}
-  # AWS Pricing Calculator 전용 계정 키. 비어 있으면 예상 비용 없이 분석한다
+  # AWS Pricing Calculator 전용 계정 키. 비어 있으면 예상 비용 없이 분석한다.
+  # 임시 견적은 kkari- 로 시작하고 호출마다 지운다. 지우지 못해 남은 것은 list-workload-estimates 로 찾아 지운다
   pricing:
     access-key: ${PRICING_AWS_ACCESS_KEY_ID:}
     secret-key: ${PRICING_AWS_SECRET_ACCESS_KEY:}
@@ -62,6 +63,6 @@ aws:
 ai-server:
   url: ${AI_SERVER_URL:http://localhost:8000}
 
-# AI 서버가 /v1/internal/** 를 부를 때 X-Internal-Token 헤더로 보내는 값. 비어 있으면 모두 막는다
+# AI 서버가 /v1/internal/** 를 부를 때 X-Internal-Token 헤더로 보내는 값. 비었거나 32자보다 짧으면 모두 막는다
 internal-api:
   token: ${INTERNAL_API_TOKEN:}

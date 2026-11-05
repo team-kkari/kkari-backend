@@ -16,9 +16,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -46,9 +44,7 @@ class ArchitectureCostEstimatorTest {
         when(calculator.price(anyList())).thenAnswer(invocation -> {
             List<UsageLine> lines = invocation.getArgument(0);
             sentLines.addAll(lines);
-            Map<String, LinePrice> prices = new HashMap<>();
-            lines.forEach(line -> prices.put(line.key(), priceOf.apply(line)));
-            return prices;
+            return lines.stream().map(priceOf).toList();
         });
         estimator = new ArchitectureCostEstimator(calculator);
     }
@@ -60,7 +56,6 @@ class ArchitectureCostEstimatorTest {
 
         assertThat(sentLines).extracting(UsageLine::serviceCode, UsageLine::usageType, UsageLine::operation,
             UsageLine::amount).containsExactlyElementsOf(expected);
-        assertThat(sentLines).extracting(UsageLine::key).allMatch(key -> key.matches("[a-zA-Z0-9]{1,10}"));
         assertThat(report.items().getFirst().monthlyUsd())
             .isEqualByComparingTo(PRICE.multiply(BigDecimal.valueOf(expected.size())));
     }
@@ -132,24 +127,33 @@ class ArchitectureCostEstimatorTest {
     }
 
     @Test
-    void RDS_xlarge는_xl_이름도_함께_보내고_가격이_나온_쪽을_쓴다() {
-        priceOf = line -> line.usageType().endsWith("xlarge")
-            ? LinePrice.noMatchingPrice("가격 계산 실패: BAD_REQUEST") : LinePrice.priced(PRICE);
+    void RDS_xlarge는_xl_이름도_후보로_보낸다() {
+        estimator.estimate(List.of(
+            node("db", pricing("rds").spec("db.r6g.xlarge").engine("MySQL").build()),
+            node("aurora", pricing("aurora").spec("db.r6g.2xlarge").engine("Aurora PostgreSQL").build())));
 
-        CostReport report = estimator.estimate(List.of(node("db",
-            pricing("rds").spec("db.r6g.xlarge").engine("MySQL").count(1).storageGb(0).build())));
+        assertThat(sentLines).extracting(UsageLine::usageTypes).contains(
+            List.of("APN2-InstanceUsage:db.r6g.xlarge", "APN2-InstanceUsage:db.r6g.xl"),
+            List.of("APN2-InstanceUsage:db.r6g.2xlarge", "APN2-InstanceUsage:db.r6g.2xl"));
+    }
 
-        assertThat(sentLines).extracting(UsageLine::usageType).containsExactly(
-            "APN2-InstanceUsage:db.r6g.xlarge", "APN2-InstanceUsage:db.r6g.xl", "APN2-RDS:GP3-Storage");
-        assertThat(report.items().getFirst().monthlyUsd()).isEqualByComparingTo("2.50");
-        assertThat(report.items().getFirst().formula())
-            .isEqualTo("APN2-InstanceUsage:db.r6g.xl 730 = 1.25 $ + APN2-RDS:GP3-Storage 0 = 1.25 $");
+    @Test
+    void 꼭_필요한_사용량이_0이면_0달러가_아니라_추정_불가다() {
+        CostReport report = estimator.estimate(List.of(
+            node("web", pricing("ec2").spec("t3.micro").count(0).build()),
+            node("bucket", pricing("s3").storageGb(0).build())));
+
+        assertThat(report.items()).extracting(CostReport.Item::monthlyUsd, CostReport.Item::formula).containsExactly(
+            tuple(null, "사용량 0 — 추정 불가"),
+            tuple(null, "사용량 0 — 추정 불가"));
+        assertThat(report.unpriced()).containsExactly("web 라벨", "bucket 라벨");
+        assertThat(sentLines).isEmpty();
     }
 
     @Test
     void 추정할_수_없는_구성요소는_null이고_합계에서_빠진다() {
         priceOf = line -> line.usageType().contains("nope")
-            ? LinePrice.noMatchingPrice("가격 계산 실패: BAD_REQUEST") : LinePrice.priced(PRICE);
+            ? LinePrice.unpriced("가격 계산 실패: BAD_REQUEST") : LinePrice.priced(PRICE);
 
         CostReport report = estimator.estimate(List.of(
             node("users", pricing("free").build()),
@@ -178,7 +182,7 @@ class ArchitectureCostEstimatorTest {
 
     @Test
     void 가격_계산_호출이_실패하면_일부_결과_대신_502로_실패한다() {
-        priceOf = line -> LinePrice.failed("가격 계산 실패: ThrottlingException (HTTP 400)");
+        priceOf = line -> LinePrice.callFailed("가격 계산 실패: ThrottlingException (HTTP 400)");
 
         assertThatThrownBy(() -> estimator.estimate(List.of(node("nat", pricing("nat_gateway").build()))))
             .isInstanceOfSatisfying(AwsException.class,

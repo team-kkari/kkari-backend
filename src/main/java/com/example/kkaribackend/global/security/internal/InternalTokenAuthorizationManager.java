@@ -13,16 +13,18 @@ import java.util.function.Supplier;
 
 /**
  * 서버 간 API 는 JWT 대신 X-Internal-Token 헤더가 설정된 토큰과 같아야 통과한다.
- * 토큰이 설정되지 않았으면 모든 요청을 막는다.
+ * 토큰이 설정되지 않았거나 추측할 수 있을 만큼 짧으면 모든 요청을 막는다.
  */
 @Component
 public class InternalTokenAuthorizationManager implements AuthorizationManager<RequestAuthorizationContext> {
     public static final String HEADER = "X-Internal-Token";
+    static final int MIN_TOKEN_LENGTH = 32;
 
     private final byte[] token;
 
     public InternalTokenAuthorizationManager(@Value("${internal-api.token}") String token) {
-        this.token = token.getBytes(StandardCharsets.UTF_8);
+        String secret = token.strip();
+        this.token = secret.length() < MIN_TOKEN_LENGTH ? new byte[0] : secret.getBytes(StandardCharsets.UTF_8);
     }
 
     @Override

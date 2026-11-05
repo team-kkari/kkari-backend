@@ -25,7 +25,6 @@ import software.amazon.awssdk.services.sts.model.GetCallerIdentityResponse;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
 
@@ -62,20 +61,22 @@ class AwsPricingCalculatorTest {
     @Test
     void 줄을_25개씩_나눠_보내고_견적은_한_번_만들고_지운다() {
         List<UsageLine> lines = IntStream.range(0, 26)
-            .mapToObj(i -> new UsageLine("L" + i, "AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730))
+            .mapToObj(i -> new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730))
             .toList();
 
-        Map<String, LinePrice> prices = calculator.price(lines);
+        List<LinePrice> prices = calculator.price(lines);
 
-        assertThat(prices).hasSize(26).allSatisfy((key, price) ->
-            assertThat(price).isEqualTo(LinePrice.priced(new BigDecimal("9.49"))));
+        assertThat(prices).hasSize(26).containsOnly(LinePrice.priced(new BigDecimal("9.49")));
         ArgumentCaptor<BatchCreateWorkloadEstimateUsageRequest> batches =
             ArgumentCaptor.forClass(BatchCreateWorkloadEstimateUsageRequest.class);
         verify(client, times(2)).batchCreateWorkloadEstimateUsage(batches.capture());
         assertThat(batches.getAllValues()).extracting(batch -> batch.usage().size()).containsExactly(25, 1);
         assertThat(batches.getAllValues()).allSatisfy(batch -> {
             assertThat(batch.workloadEstimateId()).isEqualTo(ESTIMATE_ID);
-            assertThat(batch.usage()).allSatisfy(entry -> assertThat(entry.usageAccountId()).isEqualTo(ACCOUNT_ID));
+            assertThat(batch.usage()).allSatisfy(entry -> {
+                assertThat(entry.usageAccountId()).isEqualTo(ACCOUNT_ID);
+                assertThat(entry.key()).matches("[a-zA-Z0-9]{1,10}");
+            });
         });
 
         ArgumentCaptor<CreateWorkloadEstimateRequest> create = ArgumentCaptor.forClass(CreateWorkloadEstimateRequest.class);
@@ -87,7 +88,7 @@ class AwsPricingCalculatorTest {
 
     @Test
     void 계정_ID는_처음_한_번만_조회한다() {
-        List<UsageLine> lines = List.of(new UsageLine("L0", "AmazonEC2", "APN2-NatGateway-Hours", "NatGateway", 730));
+        List<UsageLine> lines = List.of(new UsageLine("AmazonEC2", "APN2-NatGateway-Hours", "NatGateway", 730));
 
         calculator.price(lines);
         calculator.price(lines);
@@ -102,25 +103,56 @@ class AwsPricingCalculatorTest {
         when(client.batchCreateWorkloadEstimateUsage(any(BatchCreateWorkloadEstimateUsageRequest.class)))
             .thenReturn(BatchCreateWorkloadEstimateUsageResponse.builder()
                 .items(
-                    BatchCreateWorkloadEstimateUsageItem.builder().key("ok").cost(16.425)
+                    BatchCreateWorkloadEstimateUsageItem.builder().key("k0").cost(16.425)
                         .status(WorkloadEstimateCostStatus.VALID).build(),
-                    BatchCreateWorkloadEstimateUsageItem.builder().key("stale")
+                    BatchCreateWorkloadEstimateUsageItem.builder().key("k1")
                         .status(WorkloadEstimateCostStatus.STALE).build())
-                .errors(BatchCreateWorkloadEstimateUsageError.builder().key("bad")
-                    .errorCode(BatchCreateWorkloadEstimateUsageCode.BAD_REQUEST).errorMessage("No matching usage").build())
+                .errors(
+                    BatchCreateWorkloadEstimateUsageError.builder().key("k2")
+                        .errorCode(BatchCreateWorkloadEstimateUsageCode.BAD_REQUEST).build(),
+                    BatchCreateWorkloadEstimateUsageError.builder().key("k3")
+                        .errorCode(BatchCreateWorkloadEstimateUsageCode.INTERNAL_SERVER_ERROR).build())
                 .build());
 
-        Map<String, LinePrice> prices = calculator.price(List.of(
-            new UsageLine("ok", "AWSELB", "APN2-LoadBalancerUsage", "LoadBalancing:Application", 730),
-            new UsageLine("stale", "AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730),
-            new UsageLine("bad", "AmazonEC2", "APN2-BoxUsage:nope", "RunInstances", 730),
-            new UsageLine("lost", "AmazonEC2", "APN2-BoxUsage:t3.small", "RunInstances", 730)));
+        List<LinePrice> prices = calculator.price(List.of(
+            new UsageLine("AWSELB", "APN2-LoadBalancerUsage", "LoadBalancing:Application", 730),
+            new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730),
+            new UsageLine("AmazonEC2", "APN2-BoxUsage:nope", "RunInstances", 730),
+            new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.nano", "RunInstances", 730),
+            new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.small", "RunInstances", 730)));
 
-        assertThat(prices).containsExactlyInAnyOrderEntriesOf(Map.of(
-            "ok", LinePrice.priced(new BigDecimal("16.43")),
-            "stale", LinePrice.failed("가격 계산 결과가 유효하지 않습니다: STALE"),
-            "bad", LinePrice.noMatchingPrice("가격 계산 실패: BAD_REQUEST"),
-            "lost", LinePrice.failed("가격 계산 응답에 결과가 없습니다.")));
+        assertThat(prices).containsExactly(
+            LinePrice.priced(new BigDecimal("16.43")),
+            LinePrice.unpriced("가격 계산 결과가 유효하지 않습니다: STALE"),
+            LinePrice.unpriced("가격 계산 실패: BAD_REQUEST"),
+            LinePrice.callFailed("가격 계산 실패: INTERNAL_SERVER_ERROR"),
+            LinePrice.callFailed("가격 계산 응답에 결과가 없습니다."));
+    }
+
+    @Test
+    void 이름_후보_중_가격이_나온_것을_쓴다() {
+        when(client.batchCreateWorkloadEstimateUsage(any(BatchCreateWorkloadEstimateUsageRequest.class)))
+            .thenReturn(BatchCreateWorkloadEstimateUsageResponse.builder()
+                .items(BatchCreateWorkloadEstimateUsageItem.builder().key("k1").cost(372.3)
+                    .status(WorkloadEstimateCostStatus.VALID).build())
+                .errors(
+                    BatchCreateWorkloadEstimateUsageError.builder().key("k0")
+                        .errorCode(BatchCreateWorkloadEstimateUsageCode.BAD_REQUEST).build(),
+                    BatchCreateWorkloadEstimateUsageError.builder().key("k2")
+                        .errorCode(BatchCreateWorkloadEstimateUsageCode.BAD_REQUEST).build(),
+                    BatchCreateWorkloadEstimateUsageError.builder().key("k3")
+                        .errorCode(BatchCreateWorkloadEstimateUsageCode.BAD_REQUEST).build())
+                .build());
+
+        List<LinePrice> prices = calculator.price(List.of(
+            new UsageLine("AmazonRDS", List.of("APN2-InstanceUsage:db.r6g.xlarge", "APN2-InstanceUsage:db.r6g.xl"),
+                "CreateDBInstance:0002", 730),
+            new UsageLine("AmazonRDS", List.of("APN2-InstanceUsage:db.x.xlarge", "APN2-InstanceUsage:db.x.xl"),
+                "CreateDBInstance:0002", 730)));
+
+        assertThat(prices).containsExactly(
+            LinePrice.priced(new BigDecimal("372.30")),
+            LinePrice.unpriced("가격 계산 실패: BAD_REQUEST"));
     }
 
     @Test
@@ -129,14 +161,14 @@ class AwsPricingCalculatorTest {
             .thenThrow(serviceException("ThrottlingException", 400))
             .thenAnswer(invocation -> validItems(invocation.getArgument(0), 1.0));
         List<UsageLine> lines = IntStream.range(0, 26)
-            .mapToObj(i -> new UsageLine("L" + i, "AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730))
+            .mapToObj(i -> new UsageLine("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances", 730))
             .toList();
 
-        Map<String, LinePrice> prices = calculator.price(lines);
+        List<LinePrice> prices = calculator.price(lines);
 
-        assertThat(prices.get("L0")).isEqualTo(LinePrice.failed("가격 계산 실패: ThrottlingException (HTTP 400)"));
-        assertThat(prices.get("L24").monthlyUsd()).isNull();
-        assertThat(prices.get("L25")).isEqualTo(LinePrice.priced(new BigDecimal("1.00")));
+        assertThat(prices.getFirst()).isEqualTo(LinePrice.callFailed("가격 계산 실패: ThrottlingException (HTTP 400)"));
+        assertThat(prices.get(24).monthlyUsd()).isNull();
+        assertThat(prices.get(25)).isEqualTo(LinePrice.priced(new BigDecimal("1.00")));
         verify(client).deleteWorkloadEstimate(any(DeleteWorkloadEstimateRequest.class));
     }
 
@@ -145,11 +177,11 @@ class AwsPricingCalculatorTest {
         when(client.createWorkloadEstimate(any(CreateWorkloadEstimateRequest.class)))
             .thenThrow(serviceException("AccessDeniedException", 403));
 
-        Map<String, LinePrice> prices = calculator.price(List.of(
-            new UsageLine("L0", "AmazonEC2", "APN2-NatGateway-Hours", "NatGateway", 730)));
+        List<LinePrice> prices = calculator.price(List.of(
+            new UsageLine("AmazonEC2", "APN2-NatGateway-Hours", "NatGateway", 730)));
 
-        assertThat(prices).containsExactly(Map.entry("L0",
-            LinePrice.failed("가격 계산 준비 실패: AccessDeniedException (HTTP 403)")));
+        assertThat(prices).containsExactly(
+            LinePrice.callFailed("가격 계산 준비 실패: AccessDeniedException (HTTP 403)"));
         verify(client, never()).batchCreateWorkloadEstimateUsage(any(BatchCreateWorkloadEstimateUsageRequest.class));
         verify(client, never()).deleteWorkloadEstimate(any(DeleteWorkloadEstimateRequest.class));
     }
@@ -159,10 +191,10 @@ class AwsPricingCalculatorTest {
         when(client.deleteWorkloadEstimate(any(DeleteWorkloadEstimateRequest.class)))
             .thenThrow(serviceException("InternalServerException", 500));
 
-        Map<String, LinePrice> prices = calculator.price(List.of(
-            new UsageLine("L0", "AmazonEC2", "APN2-NatGateway-Hours", "NatGateway", 730)));
+        List<LinePrice> prices = calculator.price(List.of(
+            new UsageLine("AmazonEC2", "APN2-NatGateway-Hours", "NatGateway", 730)));
 
-        assertThat(prices).containsExactly(Map.entry("L0", LinePrice.priced(new BigDecimal("9.49"))));
+        assertThat(prices).containsExactly(LinePrice.priced(new BigDecimal("9.49")));
     }
 
     @Test

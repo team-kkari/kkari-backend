@@ -2,11 +2,13 @@ package com.example.kkaribackend.global.aws;
 
 import com.example.kkaribackend.global.aws.AwsPricingCalculator.LinePrice;
 import com.example.kkaribackend.global.aws.AwsPricingCalculator.UsageLine;
+import com.example.kkaribackend.global.aws.PricingCodes.EbsUsage;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Cost;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.EbsVolume;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Ec2Instance;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.LoadBalancer;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Missing;
+import com.example.kkaribackend.global.aws.dto.InfraSnapshot.NatGateway;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.RdsInstance;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.Resources;
 import com.example.kkaribackend.global.aws.dto.InfraSnapshot.S3Bucket;
@@ -14,12 +16,19 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
+
+import static com.example.kkaribackend.global.aws.PricingCodes.AMAZON_EC2;
+import static com.example.kkaribackend.global.aws.PricingCodes.AWS_ELB;
+import static com.example.kkaribackend.global.aws.PricingCodes.EBS_USAGES;
+import static com.example.kkaribackend.global.aws.PricingCodes.LB_OPERATIONS;
+import static com.example.kkaribackend.global.aws.PricingCodes.RDS_OPERATIONS;
+import static com.example.kkaribackend.global.aws.PricingCodes.USAGE_TYPE_PREFIXES;
 
 /**
  * 리소스를 AWS Pricing Calculator 사용량 줄로 바꿔 월 예상 비용(할인 전 정가)을 계산한다.
@@ -28,36 +37,12 @@ import java.util.Map;
 public class AwsCostEstimator {
     private static final int HOURS_PER_MONTH = 730;
     private static final double BYTES_PER_GB = 1L << 30;
-    private static final String AMAZON_EC2 = "AmazonEC2";
     private static final Map<String, String> FORMULAS = formulas();
-    // usageType 앞에 붙는 리전 코드. us-east-1 은 코드가 없다
-    private static final Map<String, String> USAGE_TYPE_PREFIXES = Map.of(
-        "ap-northeast-2", "APN2-",
-        "ap-northeast-1", "APN1-",
-        "us-east-1", "");
     private static final Map<String, String> EC2_OPERATIONS = Map.of(
         "Linux/UNIX", "RunInstances",
         "Windows", "RunInstances:0002",
         "Red Hat Enterprise Linux", "RunInstances:0010",
         "SUSE Linux", "RunInstances:000g");
-    static final Map<String, EbsUsage> EBS_USAGES = Map.of(
-        "gp2", new EbsUsage("EBS:VolumeUsage.gp2", "CreateVolume-Gp2"),
-        "gp3", new EbsUsage("EBS:VolumeUsage.gp3", "CreateVolume-Gp3"),
-        "io1", new EbsUsage("EBS:VolumeUsage.piops", "CreateVolume-P-IOPS"),
-        "io2", new EbsUsage("EBS:VolumeUsage.io2", "CreateVolume-io2"),
-        "st1", new EbsUsage("EBS:VolumeUsage.st1", "CreateVolume-Throughput"),
-        "sc1", new EbsUsage("EBS:VolumeUsage.sc1", "CreateVolume-SC1"),
-        "standard", new EbsUsage("EBS:VolumeUsage", "CreateVolume"));
-    private static final Map<String, String> RDS_OPERATIONS = Map.of(
-        "mysql", "CreateDBInstance:0002",
-        "postgres", "CreateDBInstance:0014",
-        "mariadb", "CreateDBInstance:0018",
-        "aurora-mysql", "CreateDBInstance:0016",
-        "aurora-postgresql", "CreateDBInstance:0021");
-    private static final Map<String, String> LB_OPERATIONS = Map.of(
-        "application", "LoadBalancing:Application",
-        "network", "LoadBalancing:Network",
-        "gateway", "LoadBalancing:Gateway");
 
     private final String region;
     private final AwsPricingCalculator calculator;
@@ -79,47 +64,22 @@ public class AwsCostEstimator {
         }
 
         Sheet sheet = new Sheet(prefix, missing);
-        if (resources.ec2() != null) {
-            sheet.startType("EC2");
-            resources.ec2().forEach(sheet::addEc2);
+        sheet.section("EC2", resources.ec2(), sheet::addEc2);
+        sheet.section("EBS", resources.ebs(), sheet::addEbs);
+        sheet.section("RDS", resources.rds(), sheet::addRds);
+        sheet.section("S3", resources.s3(), sheet::addS3);
+        sheet.section("LAMBDA", resources.lambda(), function -> sheet.set(function.functionName(), null));
+        if (resources.lambda() != null && !resources.lambda().isEmpty()) {
+            missing.add(new Missing("COST LAMBDA", "요청 수·실행 시간에 따라 달라져 추정하지 않습니다."));
         }
-        if (resources.ebs() != null) {
-            sheet.startType("EBS");
-            resources.ebs().forEach(sheet::addEbs);
-        }
-        if (resources.rds() != null) {
-            sheet.startType("RDS");
-            resources.rds().forEach(sheet::addRds);
-        }
-        if (resources.s3() != null) {
-            sheet.startType("S3");
-            resources.s3().forEach(sheet::addS3);
-        }
-        if (resources.lambda() != null) {
-            sheet.startType("LAMBDA");
-            resources.lambda().forEach(f -> sheet.set(f.functionName(), null));
-            if (!resources.lambda().isEmpty()) {
-                missing.add(new Missing("COST LAMBDA", "요청 수·실행 시간에 따라 달라져 추정하지 않습니다."));
-            }
-        }
-        if (resources.loadBalancers() != null) {
-            sheet.startType("ELB");
-            resources.loadBalancers().forEach(sheet::addLoadBalancer);
-        }
-        if (resources.natGateways() != null) {
-            sheet.startType("NAT");
-            resources.natGateways().forEach(nat -> sheet.addLine(nat.natGatewayId(),
-                AMAZON_EC2, "NatGateway-Hours", "NatGateway", HOURS_PER_MONTH));
-        }
+        sheet.section("ELB", resources.loadBalancers(), sheet::addLoadBalancer);
+        sheet.section("NAT", resources.natGateways(), sheet::addNatGateway);
         sheet.fill(calculator.price(sheet.lines()));
         return cost(sheet.monthly);
     }
 
     private static Cost cost(Map<String, Map<String, BigDecimal>> monthly) {
         return new Cost("USD", "AWS_PRICING_CALCULATOR_BEFORE_DISCOUNTS", HOURS_PER_MONTH, FORMULAS, monthly);
-    }
-
-    record EbsUsage(String usageType, String operation) {
     }
 
     private record PricedResource(String type, String id, UsageLine line) {
@@ -138,9 +98,13 @@ public class AwsCostEstimator {
             this.missing = missing;
         }
 
-        void startType(String type) {
+        <T> void section(String type, List<T> resources, Consumer<T> add) {
+            if (resources == null) {
+                return;
+            }
             this.type = type;
             monthly.put(type, new LinkedHashMap<>());
+            resources.forEach(add);
         }
 
         void set(String id, BigDecimal monthlyUsd) {
@@ -153,11 +117,13 @@ public class AwsCostEstimator {
         }
 
         // 계산 결과가 오기 전까지 자리만 잡아 두어 리소스 순서를 유지한다
-        void addLine(String id, String serviceCode, String usageType, String operation, double amount) {
+        void addLine(String id, UsageLine line) {
             set(id, null);
-            String key = "L" + priced.size();
-            priced.add(new PricedResource(type, id,
-                new UsageLine(key, serviceCode, prefix + usageType, operation, amount)));
+            priced.add(new PricedResource(type, id, line));
+        }
+
+        void addLine(String id, String serviceCode, String usageType, String operation, double amount) {
+            addLine(id, new UsageLine(serviceCode, prefix + usageType, operation, amount));
         }
 
         void addEc2(Ec2Instance instance) {
@@ -192,8 +158,9 @@ public class AwsCostEstimator {
                 unpriced(db.dbInstanceId(), "가격 계산을 지원하지 않는 엔진입니다: " + db.engine());
             } else {
                 boolean multiAz = Boolean.TRUE.equals(db.multiAz()) && !db.engine().startsWith("aurora");
-                String usage = multiAz ? "Multi-AZUsage:" : "InstanceUsage:";
-                addLine(db.dbInstanceId(), "AmazonRDS", usage + db.instanceClass(), operation, HOURS_PER_MONTH);
+                String deployment = multiAz ? "Multi-AZUsage:" : "InstanceUsage:";
+                addLine(db.dbInstanceId(),
+                    PricingCodes.rdsInstance(prefix, deployment, db.instanceClass(), operation, HOURS_PER_MONTH));
             }
         }
 
@@ -210,17 +177,22 @@ public class AwsCostEstimator {
             if (operation == null) {
                 unpriced(lb.name(), "가격 계산을 지원하지 않는 타입입니다: " + lb.type());
             } else {
-                addLine(lb.name(), "AWSELB", "LoadBalancerUsage", operation, HOURS_PER_MONTH);
+                addLine(lb.name(), AWS_ELB, "LoadBalancerUsage", operation, HOURS_PER_MONTH);
             }
+        }
+
+        void addNatGateway(NatGateway nat) {
+            addLine(nat.natGatewayId(), AMAZON_EC2, "NatGateway-Hours", "NatGateway", HOURS_PER_MONTH);
         }
 
         List<UsageLine> lines() {
             return priced.stream().map(PricedResource::line).toList();
         }
 
-        void fill(Map<String, LinePrice> prices) {
-            for (PricedResource resource : priced) {
-                LinePrice price = prices.get(resource.line().key());
+        void fill(List<LinePrice> prices) {
+            for (int i = 0; i < priced.size(); i++) {
+                PricedResource resource = priced.get(i);
+                LinePrice price = prices.get(i);
                 monthly.get(resource.type()).put(resource.id(), price.monthlyUsd());
                 if (price.failure() != null) {
                     missing.add(new Missing("COST " + resource.type() + " " + resource.id(), price.failure()));

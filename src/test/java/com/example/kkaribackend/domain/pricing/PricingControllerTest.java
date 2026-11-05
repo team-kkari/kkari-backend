@@ -29,7 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(properties = "internal-api.token=" + PricingControllerTest.TOKEN)
 @AutoConfigureMockMvc
 class PricingControllerTest {
-    static final String TOKEN = "test-internal-token";
+    static final String TOKEN = "test-internal-token-0123456789abcdef";
     private static final String URL = "/v1/internal/pricing/estimate";
     private static final String BODY = """
         {"nodes": [{"id": "web", "label": "EC2 m7g.large", "icon": "ec2", "role": "web",
@@ -77,12 +77,14 @@ class PricingControllerTest {
     }
 
     @Test
-    void 토큰이_설정되지_않으면_빈_토큰도_막는다() {
-        InternalTokenAuthorizationManager manager = new InternalTokenAuthorizationManager("");
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        request.addHeader(InternalTokenAuthorizationManager.HEADER, "");
+    void 토큰이_비었거나_짧으면_같은_값을_보내도_막는다() {
+        for (String token : List.of("", "   ", "short-placeholder")) {
+            InternalTokenAuthorizationManager manager = new InternalTokenAuthorizationManager(token);
+            MockHttpServletRequest request = new MockHttpServletRequest();
+            request.addHeader(InternalTokenAuthorizationManager.HEADER, token);
 
-        assertThat(manager.authorize(() -> null, new RequestAuthorizationContext(request)).isGranted()).isFalse();
+            assertThat(manager.authorize(() -> null, new RequestAuthorizationContext(request)).isGranted()).isFalse();
+        }
     }
 
     @Test

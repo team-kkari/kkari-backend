@@ -17,7 +17,6 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -44,11 +43,9 @@ class AwsCostEstimatorTest {
         when(calculator.price(anyList())).thenAnswer(invocation -> {
             List<UsageLine> lines = invocation.getArgument(0);
             sentLines.addAll(lines);
-            Map<String, LinePrice> prices = new HashMap<>();
-            lines.forEach(line -> prices.put(line.key(), line.usageType().contains("unknown")
-                ? LinePrice.failed("가격 계산 실패: BAD_REQUEST")
-                : LinePrice.priced(PRICE)));
-            return prices;
+            return lines.stream().map(line -> line.usageType().contains("unknown")
+                ? LinePrice.unpriced("가격 계산 실패: BAD_REQUEST")
+                : LinePrice.priced(PRICE)).toList();
         });
     }
 
@@ -76,8 +73,6 @@ class AwsCostEstimatorTest {
             tuple("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances:0010", 730.0),
             tuple("AmazonEC2", "APN2-BoxUsage:t3.micro", "RunInstances:000g", 730.0),
             tuple("AmazonEC2", "APN2-BoxUsage:unknown.large", "RunInstances", 730.0));
-        assertThat(sentLines).extracting(UsageLine::key).doesNotHaveDuplicates()
-            .allMatch(key -> key.matches("[a-zA-Z0-9]{1,10}"));
         Map<String, BigDecimal> ec2 = cost.monthlyUsdByResource().get("EC2");
         assertThat(ec2.keySet()).containsExactly("i-1", "i-2", "i-3", "i-4", "i-5", "i-6", "i-7");
         assertThat(ec2).containsEntry("i-2", PRICE)
@@ -99,7 +94,8 @@ class AwsCostEstimatorTest {
                 new RdsInstance("db-4", "db.r5.large", "aurora-mysql", false, 1, "available"),
                 new RdsInstance("db-5", "db.r5.large", "aurora-postgresql", true, 1, "available"),
                 new RdsInstance("db-6", "db.t3.micro", "oracle-se2", false, 20, "available"),
-                new RdsInstance("db-7", "db.t3.micro", "mysql", true, 20, "stopped")))
+                new RdsInstance("db-7", "db.t3.micro", "mysql", true, 20, "stopped"),
+                new RdsInstance("db-8", "db.r6g.xlarge", "mysql", false, 20, "available")))
             .build();
 
         Cost cost = estimator("ap-northeast-2").estimate(resources, missing);
@@ -110,7 +106,10 @@ class AwsCostEstimatorTest {
                 tuple("AmazonRDS", "APN2-Multi-AZUsage:db.m5.large", "CreateDBInstance:0014"),
                 tuple("AmazonRDS", "APN2-Multi-AZUsage:db.t3.micro", "CreateDBInstance:0018"),
                 tuple("AmazonRDS", "APN2-InstanceUsage:db.r5.large", "CreateDBInstance:0016"),
-                tuple("AmazonRDS", "APN2-InstanceUsage:db.r5.large", "CreateDBInstance:0021"));
+                tuple("AmazonRDS", "APN2-InstanceUsage:db.r5.large", "CreateDBInstance:0021"),
+                tuple("AmazonRDS", "APN2-InstanceUsage:db.r6g.xlarge", "CreateDBInstance:0002"));
+        assertThat(sentLines.getLast().usageTypes())
+            .containsExactly("APN2-InstanceUsage:db.r6g.xlarge", "APN2-InstanceUsage:db.r6g.xl");
         assertThat(cost.monthlyUsdByResource().get("RDS"))
             .containsEntry("db-5", PRICE)
             .containsEntry("db-6", null)
