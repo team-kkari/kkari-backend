@@ -53,7 +53,7 @@ public class StartArchitectureService {
 
         InfraSnapshot snapshot = objectMapper.readValue(latestAnalysis.getResult(), InfraSnapshot.class);
         ArchitectureRequest input = ArchitectureInputFactory.create(snapshot, project.getTerraform(),
-            project.getRequirements(), requestedCount(request));
+            project.getRequirements(), project.getAnswers(), requestedCount(request));
 
         AnalysisJob created = analysisJobRepository.save(AnalysisJob.builder()
             .project(project).type(AnalysisJobType.ARCHITECTURE).build());

@@ -1,7 +1,9 @@
 package com.example.kkaribackend.domain.user.facade;
 
+import com.example.kkaribackend.domain.user.domain.Role;
 import com.example.kkaribackend.domain.user.domain.User;
 import com.example.kkaribackend.domain.user.domain.repository.UserRepository;
+import com.example.kkaribackend.domain.user.exception.EngineerNotFoundException;
 import com.example.kkaribackend.domain.user.exception.UserNotFoundException;
 import com.example.kkaribackend.global.security.auth.CustomUserDetails;
 import com.example.kkaribackend.global.security.jwt.exception.UnauthorizedException;
@@ -27,5 +29,10 @@ public class UserFacade {
     public User getCurrentUser() {
         return userRepository.findById(getCurrentUserId())
             .orElseThrow(UserNotFoundException::new);
+    }
+
+    public User getEngineer(Long id) {
+        return userRepository.findByIdAndRole(id, Role.MSP_ENGINEER)
+            .orElseThrow(EngineerNotFoundException::new);
     }
 }

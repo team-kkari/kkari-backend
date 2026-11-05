@@ -132,8 +132,8 @@ class TerraformControllerTest {
     }
 
     private static RequestPostProcessor as(User user) {
-        return authentication(UsernamePasswordAuthenticationToken.authenticated(
-            new CustomUserDetails(user.getId(), Role.MSP_ENGINEER), null, List.of()));
+        CustomUserDetails principal = new CustomUserDetails(user.getId(), Role.MSP_ENGINEER);
+        return authentication(UsernamePasswordAuthenticationToken.authenticated(principal, null, principal.getAuthorities()));
     }
 
     private static MockMultipartFile file(String content) {

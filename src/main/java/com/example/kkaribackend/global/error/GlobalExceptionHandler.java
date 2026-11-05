@@ -44,7 +44,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentNotValidException.class)
     protected ResponseEntity<ValidErrorResponse> handleValidation(MethodArgumentNotValidException e) {
         log.warn("{}: {}", e.getClass().getSimpleName(),
-            e.getBindingResult().getFieldErrors().stream().map(FieldError::getField).toList());
+            e.getBindingResult().getFieldErrors().stream().map(GlobalExceptionHandler::fieldName).toList());
         return ResponseEntity
             .status(GlobalErrorCode.INVALID_INPUT.getStatus())
             .body(ValidErrorResponse.of(GlobalErrorCode.INVALID_INPUT, e.getBindingResult()));
@@ -84,5 +84,10 @@ public class GlobalExceptionHandler {
         return ResponseEntity
             .status(errorCode.getStatus())
             .body(ErrorResponse.of(errorCode));
+    }
+
+    // Map 키·값 검증 오류는 경로에 고객이 쓴 질문이 들어가므로 로그에는 필드명만 남긴다. 예: answers[질문] → answers
+    private static String fieldName(FieldError error) {
+        return error.getField().split("[\\[<]", 2)[0];
     }
 }

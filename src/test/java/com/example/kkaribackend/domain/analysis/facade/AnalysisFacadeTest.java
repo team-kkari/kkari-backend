@@ -80,12 +80,48 @@ class AnalysisFacadeTest {
     }
 
     @Test
-    void 긴_요약은_4000자_안에서_생략_표시로_끝난다() {
-        List<Ec2Instance> instances = new ArrayList<>();
-        for (int i = 0; i < 500; i++) {
-            instances.add(new Ec2Instance("i-" + i, "instance-type-" + i, "Linux/UNIX", "running", "ap-northeast-2a"));
+    void 고객_답변을_질문_답_줄로_붙인다() {
+        Project registered = Project.builder().id(1L).answers(Map.of("트래픽", "평일 낮 집중", "DB", "MySQL")).build();
+        registered.updateTerraform(new TerraformInfra(resources(), List.of(), Instant.EPOCH));
+
+        assertThat(facade.getInfraContext(registered)).startsWith("[Terraform]")
+            .endsWith("\n[고객 답변]\nDB: MySQL\n트래픽: 평일 낮 집중");
+    }
+
+    @Test
+    void 고객_답변만_있으면_답변_블록만_준다() {
+        Project registered = Project.builder().id(1L).answers(Map.of("DB", "MySQL")).build();
+        assertThat(facade.getInfraContext(registered)).isEqualTo("[고객 답변]\nDB: MySQL");
+    }
+
+    @Test
+    void 인프라_요약은_고객_답변과_별개로_4000자에서_자른다() {
+        Project registered = Project.builder().id(1L).answers(Map.of("DB", "MySQL")).build();
+        registered.updateTerraform(new TerraformInfra(Resources.builder().ec2(manyInstances()).build(), List.of(), Instant.EPOCH));
+
+        String result = facade.getInfraContext(registered);
+        assertThat(result.substring(0, 4000)).startsWith("[Terraform]").endsWith("…(생략)");
+        assertThat(result.substring(4000)).isEqualTo("\n[고객 답변]\nDB: MySQL");
+    }
+
+    @Test
+    void 고객_답변은_2000자에서_생략_표시로_끝난다() {
+        Map<String, String> answers = new HashMap<>();
+        for (int i = 0; i < 50; i++) {
+            answers.put("질문" + i, "답".repeat(2000));
         }
-        project.updateTerraform(new TerraformInfra(Resources.builder().ec2(instances).build(), List.of(), Instant.EPOCH));
+        Project registered = Project.builder().id(1L).answers(answers).build();
+        registered.updateTerraform(new TerraformInfra(resources(), List.of(), Instant.EPOCH));
+
+        String result = facade.getInfraContext(registered);
+        String answersBlock = result.substring(result.indexOf("[고객 답변]"));
+        assertThat(result).startsWith("[Terraform]");
+        assertThat(answersBlock).hasSize(2000).endsWith("…(생략)");
+    }
+
+    @Test
+    void 긴_요약은_4000자_안에서_생략_표시로_끝난다() {
+        project.updateTerraform(new TerraformInfra(Resources.builder().ec2(manyInstances()).build(), List.of(), Instant.EPOCH));
         String result = facade.getInfraContext(project);
         assertThat(result).hasSize(4000).endsWith("…(생략)");
     }
@@ -116,6 +152,14 @@ class AnalysisFacadeTest {
         job.succeed(mapper.writeValueAsString(snapshot));
         when(repository.findFirstByProjectIdAndTypeAndStatusOrderByIdDesc(1L, AnalysisJobType.ANALYSIS, AnalysisStatus.SUCCEEDED))
             .thenReturn(Optional.of(job));
+    }
+
+    private List<Ec2Instance> manyInstances() {
+        List<Ec2Instance> instances = new ArrayList<>();
+        for (int i = 0; i < 500; i++) {
+            instances.add(new Ec2Instance("i-" + i, "instance-type-" + i, "Linux/UNIX", "running", "ap-northeast-2a"));
+        }
+        return instances;
     }
 
     private Resources resources() {

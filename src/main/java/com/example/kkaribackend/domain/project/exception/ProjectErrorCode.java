@@ -9,7 +9,8 @@ import org.springframework.http.HttpStatus;
 @AllArgsConstructor
 public enum ProjectErrorCode implements ErrorProperty {
     PROJECT_NOT_FOUND(HttpStatus.NOT_FOUND, "P001", "프로젝트를 찾을 수 없습니다."),
-    NOT_ASSIGNED_PROJECT(HttpStatus.FORBIDDEN, "P002", "담당하지 않는 프로젝트입니다.");
+    NOT_ASSIGNED_PROJECT(HttpStatus.FORBIDDEN, "P002", "담당하지 않는 프로젝트입니다."),
+    NOT_REGISTERED_PROJECT(HttpStatus.FORBIDDEN, "P003", "직접 등록한 서비스가 아닙니다.");
 
     private final HttpStatus status;
     private final String code;
